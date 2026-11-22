@@ -109,6 +109,10 @@ import androidx.compose.ui.zIndex
 import com.rtbishop.look4sat.core.domain.model.Constants
 import com.rtbishop.look4sat.core.domain.model.RCSettings
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
+import com.rtbishop.look4sat.core.domain.model.RadioPttLine
+import com.rtbishop.look4sat.core.domain.model.RadioPttMethod
+import com.rtbishop.look4sat.core.domain.model.RadioPttSettings
+import com.rtbishop.look4sat.core.domain.model.RadioRxEndpoint
 import com.rtbishop.look4sat.core.domain.model.RadioProtocolFamily
 import com.rtbishop.look4sat.core.domain.model.radioModelDescriptor
 import com.rtbishop.look4sat.core.domain.model.parseRadioTcpEndpoint
@@ -1253,6 +1257,11 @@ fun RadioControlDialog(
     val initialBaudRates = radioBaudRates(initialSettings.radioModel)
     val splitMode  = rememberSaveable { mutableStateOf(initialSettings.splitMode) }
     val catRts = rememberSaveable { mutableStateOf(initialSettings.catRts) }
+    var pttMethod by rememberSaveable { mutableStateOf(initialSettings.pttMethod) }
+    var pttLine by rememberSaveable { mutableStateOf(initialSettings.ptt.line) }
+    var pttActiveHigh by rememberSaveable { mutableStateOf(initialSettings.ptt.activeHigh) }
+    var pttUsbAddress by rememberSaveable { mutableStateOf(initialSettings.ptt.usbAddress) }
+    var voxRelease by rememberSaveable { mutableStateOf(initialSettings.ptt.voxReleaseMillis.toString()) }
     val catDtr = rememberSaveable { mutableStateOf(initialSettings.catDtr) }
     val usbFlow = rememberSaveable { mutableStateOf(initialSettings.usbFlowControl.name) }
     val usbDriver = rememberSaveable {
@@ -1264,6 +1273,16 @@ fun RadioControlDialog(
     }
     val duplexMode = rememberSaveable { mutableStateOf(initialSettings.duplexMode) }
     val catTransport = rememberSaveable { mutableStateOf(initialSettings.catTransport) }
+    var separateRx by rememberSaveable { mutableStateOf(initialSettings.rxEndpoint != null) }
+    var rxModel by rememberSaveable { mutableStateOf(initialSettings.rxEndpoint?.model ?: initialSettings.radioModel) }
+    var rxTransport by rememberSaveable { mutableStateOf(initialSettings.rxEndpoint?.transport ?: initialSettings.catTransport) }
+    var rxBaud by rememberSaveable { mutableStateOf(initialSettings.rxEndpoint?.baudRate ?: initialSettings.baudRate) }
+    var rxCiv by rememberSaveable { mutableStateOf((initialSettings.rxEndpoint?.civAddress ?: initialSettings.civAddress)
+        ?.let { "0x%02X".format(it) }.orEmpty()) }
+    var rxTcpProtocol by rememberSaveable {
+        mutableStateOf(initialSettings.rxEndpoint?.tcpProtocol ?: initialSettings.tcpProtocol)
+    }
+    val effectiveRxTransport = if (separateRx) rxTransport else catTransport.value
     val tcpProtocol = rememberSaveable { mutableStateOf(initialSettings.tcpProtocol) }
     val txAddress  = rememberSaveable { mutableStateOf(initialSettings.txRadioAddress) }
     val rxAddress  = rememberSaveable { mutableStateOf(initialSettings.rxRadioAddress) }
@@ -1318,6 +1337,11 @@ fun RadioControlDialog(
         mutableStateMapOf(initialSettings.catTransport to initialRxName)
     }
     val selectingFor = rememberSaveable { mutableStateOf("") } // "tx", "rx", or ""
+    val pickerTransport = when (selectingFor.value) {
+        "ptt" -> RadioControlSettings.TRANSPORT_USB
+        "rx" -> effectiveRxTransport
+        else -> catTransport.value
+    }
     val bluetoothDevicesRevision = remember { mutableIntStateOf(0) }
     val usbDevicesRevision = remember { mutableIntStateOf(0) }
     val txUsbError = remember { mutableStateOf<UsbSelectionError?>(null) }
@@ -1354,7 +1378,9 @@ fun RadioControlDialog(
             attached.vendorId, attached.productId).map { it.toString() } +
             listOfNotNull(parsed.driver?.name)).joinToString(":")
         val selection = pending.copy(address = address)
-        if (selection.target == "tx") {
+        if (selection.target == "ptt") {
+            pttUsbAddress = selection.address
+        } else if (selection.target == "tx") {
             txAddress.value = selection.address
             txName.value = selection.name
             txUsbError.value = null
@@ -1376,7 +1402,7 @@ fun RadioControlDialog(
                         val selection = pendingUsbSelection.value ?: return
                         if (intent.data?.lastPathSegment != selection.token) return
                         if (!selection.accepts(intent.data?.lastPathSegment, selectingFor.value,
-                                radioModel.value, catTransport.value == RadioControlSettings.TRANSPORT_USB)) {
+                                radioModel.value, pickerTransport == RadioControlSettings.TRANSPORT_USB)) {
                             pendingUsbSelection.value = null
                             return
                         }
@@ -1423,7 +1449,7 @@ fun RadioControlDialog(
         usbDevicesRevision.intValue++
         pendingUsbSelection.value?.let { selection ->
             if (!selection.accepts(selection.token, selectingFor.value, radioModel.value,
-                    catTransport.value == RadioControlSettings.TRANSPORT_USB)) {
+                    pickerTransport == RadioControlSettings.TRANSPORT_USB)) {
                 pendingUsbSelection.value = null
             } else if (authorizedUsbDevice(usbManager, selection) != null) {
                 applyUsbSelection(selection)
@@ -1436,7 +1462,8 @@ fun RadioControlDialog(
         selectingFor.value = target
         usbPermissionDenied.value = false
         if (
-            catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH &&
+            (if (target == "rx") effectiveRxTransport else catTransport.value) == RadioControlSettings.TRANSPORT_BLUETOOTH &&
+            target != "ptt" &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             ContextCompat.checkSelfPermission(
                 context,
@@ -1472,7 +1499,8 @@ fun RadioControlDialog(
     val baudRates = radioBaudRates(radioModel.value)
 
     val pairedDevices: List<RadioDeviceUiEntry> = remember(
-        catTransport.value,
+        pickerTransport,
+        selectingFor.value,
         radioModel.value,
         usbSerialDeviceFormat,
         bluetoothDevicesRevision.intValue,
@@ -1481,9 +1509,9 @@ fun RadioControlDialog(
     ) {
         buildList {
             try {
-                if (catTransport.value == RadioControlSettings.TRANSPORT_USB) {
+                if (pickerTransport == RadioControlSettings.TRANSPORT_USB) {
                     usbManager.deviceList.values.forEach { device ->
-                        val override = if (isL4s) null else
+                        val override = if (isL4s || selectingFor.value == "ptt") null else
                             com.rtbishop.look4sat.core.domain.control.SerialUsbDriver.entries
                                 .firstOrNull { it.name == usbDriver.value }
                         val ports = device.usbSerialPorts(usbManager, override)
@@ -1550,7 +1578,10 @@ fun RadioControlDialog(
 
     val onAccept = accept@{
         if (isVox) {
-            onSave(voxControlSettings(initialSettings, enabled.value).copy(radioAudio=audioSettings))
+            onSave(voxControlSettings(initialSettings, enabled.value).copy(
+                radioAudio = audioSettings,
+                ptt = RadioPttSettings(pttMethod, voxReleaseMillis = voxRelease.toLongOrNull()?.coerceIn(0L, 2_000L) ?: 350L)
+            ))
             onDismiss()
             return@accept
         }
@@ -1563,8 +1594,9 @@ fun RadioControlDialog(
             val bothBlank = !isSingleRadio && txAddress.value.isBlank() && rxAddress.value.isBlank()
             txAddressError.value = (isSingleRadio && txAddress.value.isBlank()) || bothBlank ||
                 (txAddress.value.isNotBlank() && parseRadioTcpEndpoint(txAddress.value) == null)
-            rxAddressError.value = !isSingleRadio && (bothBlank ||
-                (rxAddress.value.isNotBlank() && parseRadioTcpEndpoint(rxAddress.value) == null))
+        }
+        if (enabled.value && !isSingleRadio && effectiveRxTransport == RadioControlSettings.TRANSPORT_TCP) {
+            rxAddressError.value = rxAddress.value.isNotBlank() && parseRadioTcpEndpoint(rxAddress.value) == null
         }
         if (enabled.value && catTransport.value == RadioControlSettings.TRANSPORT_USB) {
             val bothBlank = !isSingleRadio && txAddress.value.isBlank() && rxAddress.value.isBlank()
@@ -1573,11 +1605,13 @@ fun RadioControlDialog(
                 txAddress.value.isBlank() -> null
                 else -> validateUsbSelection(usbManager, txAddress.value, requiredStopBits)
             }
+        }
+        if (enabled.value && effectiveRxTransport == RadioControlSettings.TRANSPORT_USB) {
             rxUsbError.value = when {
                 isSingleRadio -> null
-                bothBlank -> UsbSelectionError.NOT_SELECTED
                 rxAddress.value.isBlank() -> null
-                else -> validateUsbSelection(usbManager, rxAddress.value, requiredStopBits)
+                else -> validateUsbSelection(usbManager, rxAddress.value,
+                    if (separateRx) radioModelDescriptor(rxModel).serialStopBits else requiredStopBits)
             }
         }
         val parsedCivAddress = if (!isVox && isIcom) parseCivAddress(civAddress.value) else null
@@ -1592,14 +1626,27 @@ fun RadioControlDialog(
             if (civAddressError.value) issues += context.getString(R.string.rc_civ_address_error)
             txUsbError.value?.let { issues += "TX: " + context.getString(it.messageResource) }
             rxUsbError.value?.let { issues += "RX: " + context.getString(it.messageResource) }
-            if (catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH) {
-                val addresses = listOf(txAddress.value) + if (isSingleRadio) emptyList() else listOf(rxAddress.value)
-                if (addresses.all { it.isBlank() }) issues += context.getString(R.string.rc_config_device_required)
-                if (addresses.any { it.isNotBlank() && !android.bluetooth.BluetoothAdapter.checkBluetoothAddress(it) })
-                    issues += context.getString(R.string.rc_config_bluetooth_address)
+            if (txAddress.value.isBlank() && (isSingleRadio || rxAddress.value.isBlank()))
+                issues += context.getString(R.string.rc_config_device_required)
+            val bluetoothAddresses = buildList {
+                if (catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH) add(txAddress.value)
+                if (!isSingleRadio && effectiveRxTransport == RadioControlSettings.TRANSPORT_BLUETOOTH) add(rxAddress.value)
             }
-            if (!isSingleRadio && txAddress.value.isNotBlank() && txAddress.value == rxAddress.value)
+            if (bluetoothAddresses.any { it.isNotBlank() && !android.bluetooth.BluetoothAdapter.checkBluetoothAddress(it) })
+                issues += context.getString(R.string.rc_config_bluetooth_address)
+            val parsedRxCiv = parseCivAddress(rxCiv)
+            val rxDescriptor = radioModelDescriptor(rxModel)
+            val sharedCiv = separateRx && catTransport.value == RadioControlSettings.TRANSPORT_USB &&
+                effectiveRxTransport == RadioControlSettings.TRANSPORT_USB && isIcom &&
+                rxDescriptor.protocolFamily == RadioProtocolFamily.ICOM_CIV &&
+                parsedRxCiv != null && parsedRxCiv != parsedCivAddress &&
+                rxBaud == baudRate.intValue && rxDescriptor.serialStopBits == requiredStopBits
+            if (!isSingleRadio && txAddress.value.isNotBlank() && txAddress.value == rxAddress.value &&
+                effectiveRxTransport == catTransport.value && !sharedCiv)
                 issues += context.getString(R.string.rc_config_duplicate_device)
+            if (!isSingleRadio && separateRx && rxDescriptor.protocolFamily == RadioProtocolFamily.ICOM_CIV &&
+                rxTcpProtocol != RadioControlSettings.TCP_PROTOCOL_HAMLIB && parsedRxCiv == null)
+                issues += "RX: " + context.getString(R.string.rc_civ_address_error)
         }
         val parsedL4sStep = l4sDopplerStepHz.value.toLongOrNull()
         val correctionStep = l4sCorrectionStepHz.value.toLongOrNull()
@@ -1612,6 +1659,12 @@ fun RadioControlDialog(
             fmDialDeadbandHz.value.toLongOrNull()?.let { it in 10L..100_000L } != true ||
             sharedBusDelayMillis.value.toLongOrNull()?.let { it in 0L..2_000L } != true))
             issues += context.getString(R.string.rc_config_timing)
+        if (pttMethod == RadioPttMethod.USB_SEPARATE && pttUsbAddress.isBlank()) {
+            issues += context.getString(R.string.rc_ptt_select_port)
+        }
+        if (pttMethod == RadioPttMethod.VOX && voxRelease.toLongOrNull()?.let { it in 0L..2_000L } != true) {
+            issues += context.getString(R.string.rc_config_timing)
+        }
         val draft = RadioControlSettings(
                 enabled        = enabled.value,
                 radioModel     = radioModel.value,
@@ -1644,7 +1697,12 @@ fun RadioControlDialog(
                 l4sCorrectionEditStepHz = correctionStep ?: 10L,
                 n76BluetoothAudio = n76BluetoothAudio.value,
                 n76Options = n76Options,
-                radioAudio = audioSettings
+                radioAudio = audioSettings,
+                ptt = RadioPttSettings(pttMethod, pttUsbAddress, pttLine, pttActiveHigh,
+                    voxRelease.toLongOrNull()?.coerceIn(0L, 2_000L) ?: 350L),
+                rxEndpoint = if (!isSingleRadio && separateRx) RadioRxEndpoint(
+                    rxModel, rxTransport, rxBaud, parseCivAddress(rxCiv), rxTcpProtocol
+                ) else null
             )
         if (issues.isEmpty()) {
             onSave(draft)
@@ -1722,6 +1780,11 @@ fun RadioControlDialog(
                             txNameByTransport[catTransport.value] = txName.value
                             rxNameByTransport[catTransport.value] = rxName.value
                             catTransport.value = transport
+                            if (transport == RadioControlSettings.TRANSPORT_VOX) {
+                                pttMethod = RadioPttMethod.VOX
+                            } else if (transport != RadioControlSettings.TRANSPORT_USB && pttMethod == RadioPttMethod.USB_CAT) {
+                                pttMethod = RadioPttMethod.CAT
+                            }
                             txAddress.value = txAddressByTransport[transport].orEmpty()
                             rxAddress.value = rxAddressByTransport[transport].orEmpty()
                             txName.value = txNameByTransport[transport].orEmpty()
@@ -1733,10 +1796,57 @@ fun RadioControlDialog(
                             usbPermissionDenied.value = false
                             selectingFor.value = ""
                         },
-                        label = { Text(transport, fontSize = 12.sp) },
+                        label = { Text(if (transport == RadioControlSettings.TRANSPORT_VOX)
+                            stringResource(R.string.rc_ptt_no_cat) else transport, fontSize = 12.sp) },
                         enabled = enabled.value || transport == RadioControlSettings.TRANSPORT_VOX
                     )
                 }
+            }
+            Text(stringResource(R.string.rc_ptt_method), fontWeight = FontWeight.Medium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                val methods = mapOf(
+                    RadioPttMethod.CAT to R.string.rc_ptt_cat,
+                    RadioPttMethod.USB_CAT to R.string.rc_ptt_same_port,
+                    RadioPttMethod.USB_SEPARATE to R.string.rc_ptt_separate_port,
+                    RadioPttMethod.VOX to R.string.rc_ptt_vox,
+                    RadioPttMethod.RECEIVE_ONLY to R.string.rc_ptt_receive_only
+                )
+                methods.forEach { (method, label) ->
+                    val available = when (method) {
+                        RadioPttMethod.CAT -> !isVox && modelDescriptor.capabilities.ptt
+                        RadioPttMethod.USB_CAT -> catTransport.value == RadioControlSettings.TRANSPORT_USB &&
+                            !isL4s && usbFlow.value == "NONE"
+                        RadioPttMethod.USB_SEPARATE -> !isVox
+                        else -> true
+                    }
+                    FilterChip(
+                        selected = pttMethod == method,
+                        enabled = available,
+                        onClick = { pttMethod = method; selectingFor.value = "" },
+                        label = { Text(stringResource(label)) }
+                    )
+                }
+            }
+            if (pttMethod == RadioPttMethod.USB_CAT || pttMethod == RadioPttMethod.USB_SEPARATE) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RadioPttLine.entries.forEach { line ->
+                        FilterChip(selected = pttLine == line, onClick = { pttLine = line }, label = { Text(line.name) })
+                    }
+                    FilterChip(selected = pttActiveHigh, onClick = { pttActiveHigh = true },
+                        label = { Text(stringResource(R.string.rc_ptt_active_high)) })
+                    FilterChip(selected = !pttActiveHigh, onClick = { pttActiveHigh = false },
+                        label = { Text(stringResource(R.string.rc_ptt_active_low)) })
+                }
+                if (pttMethod == RadioPttMethod.USB_SEPARATE) {
+                    OutlinedButton(onClick = { selectDevice("ptt") }) {
+                        Text(stringResource(R.string.rc_ptt_select_port))
+                    }
+                    if (pttUsbAddress.isNotBlank()) Text(pairedDevices.firstOrNull { it.address == pttUsbAddress }?.name ?: pttUsbAddress)
+                }
+            }
+            if (pttMethod == RadioPttMethod.VOX) {
+                OutlinedTextField(value = voxRelease, onValueChange = { voxRelease = it },
+                    label = { Text(stringResource(R.string.rc_ptt_vox_release)) }, singleLine = true)
             }
             if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
                 Text(stringResource(R.string.rc_tcp_protocol), fontWeight = FontWeight.Medium)
@@ -1979,7 +2089,77 @@ fun RadioControlDialog(
             // RX Radio (hidden in split mode — the same radio handles both)
             if (!isSingleRadio) {
                 Text(stringResource(R.string.rc_rx_radio), fontWeight = FontWeight.Medium)
-                if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
+                FilterChip(
+                    selected = separateRx,
+                    onClick = {
+                        separateRx = !separateRx
+                        if (separateRx) {
+                            rxModel = radioModel.value
+                            rxTransport = catTransport.value
+                            rxBaud = baudRate.intValue
+                            rxCiv = civAddress.value
+                            rxTcpProtocol = tcpProtocol.value
+                        }
+                        selectingFor.value = ""
+                    },
+                    label = { Text(stringResource(R.string.rc_independent_rx_cat)) }
+                )
+                if (separateRx) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        RadioControlSettings.SUPPORTED_TRANSPORTS.filter { it != RadioControlSettings.TRANSPORT_VOX }.forEach { transport ->
+                            FilterChip(selected = rxTransport == transport, onClick = {
+                                if (rxTransport != transport) {
+                                    rxTransport = transport
+                                    rxAddress.value = ""
+                                    rxName.value = ""
+                                    selectingFor.value = ""
+                                    val models = com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(transport)
+                                    if (rxModel !in models) {
+                                        rxModel = models.first()
+                                        rxBaud = radioBaudRates(rxModel).first()
+                                        rxCiv = defaultCivAddress(rxModel)?.let { "0x%02X".format(it) }.orEmpty()
+                                    }
+                                }
+                            }, label = { Text(transport) })
+                        }
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(rxTransport)
+                            .filter { it != RadioControlSettings.MODEL_VERO_N76 && it != RadioControlSettings.MODEL_QUANSHENG_UVK1 &&
+                                it != RadioControlSettings.MODEL_QUANSHENG_UVK5V3 }
+                            .forEach { model ->
+                                FilterChip(selected = rxModel == model, onClick = {
+                                    rxModel = model
+                                    rxBaud = radioBaudRates(model).first()
+                                    rxCiv = defaultCivAddress(model)?.let { "0x%02X".format(it) }.orEmpty()
+                                    selectingFor.value = ""
+                                }, label = { Text(model) })
+                            }
+                    }
+                    if (rxTransport == RadioControlSettings.TRANSPORT_TCP) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            RadioControlSettings.SUPPORTED_TCP_PROTOCOLS.forEach { protocol ->
+                                FilterChip(selected = rxTcpProtocol == protocol, onClick = { rxTcpProtocol = protocol },
+                                    label = { Text(stringResource(if (protocol == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
+                                        R.string.rc_tcp_protocol_hamlib else R.string.rc_tcp_protocol_raw)) })
+                            }
+                        }
+                    }
+                    if (rxTransport != RadioControlSettings.TRANSPORT_TCP ||
+                        rxTcpProtocol != RadioControlSettings.TCP_PROTOCOL_HAMLIB) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            radioBaudRates(rxModel).forEach { rate ->
+                                FilterChip(selected = rxBaud == rate, onClick = { rxBaud = rate },
+                                    label = { Text(rate.toString()) })
+                            }
+                        }
+                        if (defaultCivAddress(rxModel) != null) {
+                            OutlinedTextField(value = rxCiv, onValueChange = { rxCiv = it },
+                                label = { Text(stringResource(R.string.rc_civ_address)) }, singleLine = true)
+                        }
+                    }
+                }
+                if (effectiveRxTransport == RadioControlSettings.TRANSPORT_TCP) {
                     OutlinedTextField(
                         value = rxAddress.value,
                         onValueChange = {
@@ -2006,7 +2186,7 @@ fun RadioControlDialog(
                     )
                 }
                 rxUsbError.value?.takeIf {
-                    catTransport.value == RadioControlSettings.TRANSPORT_USB
+                    effectiveRxTransport == RadioControlSettings.TRANSPORT_USB
                 }?.let { error ->
                     Text(
                         text = stringResource(error.messageResource),
@@ -2036,7 +2216,7 @@ fun RadioControlDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable(enabled = entry.isSupported) {
-                                    if (catTransport.value == RadioControlSettings.TRANSPORT_USB) {
+                                    if (pickerTransport == RadioControlSettings.TRANSPORT_USB) {
                                         val device = usbManager.deviceList.values.firstOrNull {
                                             it.deviceId == entry.usbDeviceId
                                         }

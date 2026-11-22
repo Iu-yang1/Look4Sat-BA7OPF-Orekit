@@ -1656,6 +1656,38 @@ class RadioTrackingServiceTest {
     }
 
     @Test
+    fun ft4OwnersHoldTrackingWritesDuringTwoBursts() = runTest {
+        val slot = 1_800_000_000_000L
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            nowProvider = { slot + testScheduler.currentTime })
+        fixture.satelliteRepo.positionAt = { fixture.position.copy(distanceRate = (it - slot) / 1_000.0) }
+        fixture.service.connectRadios()
+        val receive = fixture.service.protectFt4Waveforms()
+        val send = fixture.service.protectFt4Waveforms()
+        fixture.startTracking()
+        runCurrent()
+        fun frequencyWrites() = tx.operations.count { it.startsWith("frequency:") }
+        val initial = frequencyWrites()
+        advanceTimeBy(5_999L)
+        runCurrent()
+        assertEquals(initial, frequencyWrites())
+        advanceTimeBy(501L)
+        runCurrent()
+        assertEquals(initial + 1, frequencyWrites())
+        assertTrue(slot + 10_520L in fixture.satelliteRepo.requestedTimes)
+        receive.close()
+        receive.close()
+        advanceTimeBy(5_000L)
+        runCurrent()
+        assertEquals(initial + 1, frequencyWrites())
+        send.close()
+        runCurrent()
+        assertTrue(frequencyWrites() > initial + 1)
+        fixture.close()
+    }
+
+    @Test
     fun trackingOrbitCalculationUsesDisciplinedUtc() = runTest {
         var disciplinedNow = 1_800_000_000_000L
         val fixture = Fixture(

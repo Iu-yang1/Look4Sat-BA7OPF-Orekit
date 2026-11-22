@@ -60,7 +60,8 @@ class Ft4Service(
             // One owned decoder worker; the Rust build does not spawn a Rayon pool.
             Thread(null, runnable, "Look4Sat-FT4-decode", DECODE_THREAD_STACK_BYTES)
         }
-        .asCoroutineDispatcher()
+        .asCoroutineDispatcher(),
+    private val protectCat: () -> AutoCloseable = { AutoCloseable {} }
 ) : IFt4Service {
     private val lifecycleLock = Any()
     private val mutableCapability = MutableStateFlow(Ft4Capability())
@@ -209,6 +210,7 @@ class Ft4Service(
     }
 
     private suspend fun receiveLoop(generation: Long, options: Ft4DecoderOptions, myCall: String) {
+        val catProtection = protectCat()
         var decoder: Ft4NativeDecoder? = null
         var previousContext: DecodeContext? = null
         try {
@@ -290,6 +292,7 @@ class Ft4Service(
                 mutableEngineState.value = Ft4EngineState.Failed(error.message ?: error.javaClass.simpleName)
             }
         } finally {
+            catProtection.close()
             withContext(NonCancellable + decodeDispatcher) { decoder?.close() }
             if(activeDecoder===decoder) activeDecoder=null
         }

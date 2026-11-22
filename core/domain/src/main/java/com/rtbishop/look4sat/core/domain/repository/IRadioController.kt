@@ -83,6 +83,9 @@ interface IRadioController {
     suspend fun pttOnIfGeneration(expectedGeneration: Long): Boolean =
         expectedGeneration == pttSafetyGeneration() && pttOn()
 
+    suspend fun pttOnIfGeneration(expectedGeneration: Long, isOnTime: () -> Boolean): Boolean =
+        isOnTime() && pttOnIfGeneration(expectedGeneration)
+
     /** Invalidates queued PTT-ON work before an emergency PTT-OFF is enqueued. */
     fun invalidatePendingPttOn() = Unit
 

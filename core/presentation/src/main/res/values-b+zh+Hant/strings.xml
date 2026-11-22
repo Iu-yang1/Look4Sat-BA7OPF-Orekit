@@ -1016,4 +1016,16 @@
     <string name="update_source_moeyy">github.moeyy.xyz（代理）</string>
     <string name="update_source_trying">正在尝试：%s</string>
     <string name="update_source_served">使用的更新源：%s</string>
+    <string name="rc_ptt_method">PTT 方式</string>
+    <string name="rc_ptt_cat">電臺 CAT</string>
+    <string name="rc_ptt_same_port">CAT 埠 RTS/DTR</string>
+    <string name="rc_ptt_separate_port">獨立 USB 埠 RTS/DTR</string>
+    <string name="rc_ptt_vox">音訊 VOX</string>
+    <string name="rc_ptt_receive_only">僅接收</string>
+    <string name="rc_ptt_select_port">選擇 USB PTT 連接埠</string>
+    <string name="rc_ptt_active_high">高電位有效</string>
+    <string name="rc_ptt_active_low">低電位有效</string>
+    <string name="rc_ptt_vox_release">VOX 釋放等待（毫秒）</string>
+    <string name="rc_ptt_no_cat">無 CAT</string>
+    <string name="rc_independent_rx_cat">單獨設定 RX CAT</string>
 </resources>

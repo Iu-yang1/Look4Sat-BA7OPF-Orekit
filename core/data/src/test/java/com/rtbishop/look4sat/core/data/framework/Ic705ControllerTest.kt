@@ -212,7 +212,7 @@ class Ic705ControllerTest {
             val radio=Ic705Controller(null,"USB",transport=transport,variant=variant,dedicatedSatelliteMode=false)
             assertTrue(radio.connect())
             transport.payloads.clear()
-            if(variant==IcomCivVariant.IC820) {
+            if(variant in setOf(IcomCivVariant.IC820, IcomCivVariant.IC821, IcomCivVariant.LEGACY_SINGLE_LEG)) {
                 assertFalse(radio.supportsPttReadback);assertNull(radio.readPttState())
                 assertFalse(transport.payloads.contains("1C:00"))
             } else {

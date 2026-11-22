@@ -196,8 +196,14 @@ class SerialRadioController(
     private val actor: RadioCommandActor
 ) : IRadioController {
     override val commandTimeoutMillis get() = delegate.commandTimeoutMillis
-    private suspend fun <T> execute(operation: suspend () -> T): T =
-        actor.execute(delegate.commandTimeoutMillis, operation)
+    private suspend fun <T> execute(operation: suspend () -> T): T {
+        val budget = coroutineContext[Ft4CatBudget]
+        budget?.checkBeforeCommand()
+        return actor.execute(delegate.commandTimeoutMillis) {
+            budget?.checkBeforeCommand()
+            if (budget == null) operation() else withContext(budget) { operation() }
+        }
+    }
     override val remoteState get() = delegate.remoteState
     override val supportsAtomicPair get() = delegate.supportsAtomicPair
     override suspend fun prepareSatelliteBands(rxHz: Long, txHz: Long) =
@@ -239,6 +245,8 @@ class SerialRadioController(
     override fun pttSafetyGeneration() = actor.currentPttGeneration()
     override suspend fun pttOnIfGeneration(expectedGeneration: Long) =
         actor.executePttOn(expectedGeneration, delegate::pttOn)
+    override suspend fun pttOnIfGeneration(expectedGeneration: Long, isOnTime: () -> Boolean) =
+        actor.executePttOn(expectedGeneration) { isOnTime() && delegate.pttOn() }
     override suspend fun pttOff() = actor.executePttOff(delegate::pttOff)
     override fun invalidatePendingPttOn() = actor.invalidatePendingPttOn()
     override suspend fun setBand(frequencyHz: Long) = execute { delegate.setBand(frequencyHz) }

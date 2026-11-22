@@ -48,6 +48,8 @@ interface RadioTransport : ControlTransport {
     /** Configure physical USB CAT modem-control lines before connect; not CAT PTT. */
     fun setCatSerialControlLines(rts: Boolean, dtr: Boolean) = Unit
     fun setUsbFlowControl(flow: SerialUsbFlow) = Unit
+    fun reserveUsbPtt(line: com.rtbishop.look4sat.core.domain.model.RadioPttLine, activeHigh: Boolean): Boolean = false
+    suspend fun setUsbPtt(active: Boolean): Boolean = false
     suspend fun readUsbModemStatus(): UsbModemStatus? = null
 }
 
@@ -163,6 +165,8 @@ class UsbSerialRadioTransport(
     private var cdcDtrOnConnect = false
     private var catRtsOnConnect = false
     private var flowControl = SerialUsbFlow.NONE
+    private var pttLine: com.rtbishop.look4sat.core.domain.model.RadioPttLine? = null
+    private var pttIdle = false
     private var statusEndpoint: UsbEndpoint? = null
     private var lastStatus: UsbModemStatus? = null
     private var nextStatusPoll = 0L
@@ -179,6 +183,31 @@ class UsbSerialRadioTransport(
         catRtsOnConnect = rts
         cdcDtrOnConnect = dtr
         nativeCdcFastWrites = false
+    }
+    override fun reserveUsbPtt(
+        line: com.rtbishop.look4sat.core.domain.model.RadioPttLine,
+        activeHigh: Boolean
+    ): Boolean {
+        if (isConnected || nativeCdcFastWrites || flowControl != SerialUsbFlow.NONE) return false
+        pttLine = line
+        pttIdle = !activeHigh
+        when (line) {
+            com.rtbishop.look4sat.core.domain.model.RadioPttLine.RTS -> catRtsOnConnect = pttIdle
+            com.rtbishop.look4sat.core.domain.model.RadioPttLine.DTR -> cdcDtrOnConnect = pttIdle
+        }
+        return true
+    }
+
+    override suspend fun setUsbPtt(active: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val opened = connection ?: return@withContext false
+        val port = selectedPort ?: return@withContext false
+        if (!isConnected || pttLine == null) return@withContext false
+        val level = if (active) !pttIdle else pttIdle
+        val rts = if (pttLine == com.rtbishop.look4sat.core.domain.model.RadioPttLine.RTS) level else catRtsOnConnect
+        val dtr = if (pttLine == com.rtbishop.look4sat.core.domain.model.RadioPttLine.DTR) level else cdcDtrOnConnect
+        writeUsbSerialControlLines(port.driver, port.control.id, port.portIndex, rts, dtr) { type, request, value, index ->
+            opened.controlTransfer(type, request, value, index, null, 0, IO_TIMEOUT_MILLIS)
+        }
     }
     private val manager = context.applicationContext.getSystemService(UsbManager::class.java)
     private val selector = parseUsbSerialSelector(deviceSelector)
@@ -343,6 +372,15 @@ class UsbSerialRadioTransport(
     }
 
     private fun releaseControlLines(opened: UsbDeviceConnection, port: UsbSerialPortCandidate) {
+        if (pttLine != null) {
+            val released = writeUsbSerialControlLines(port.driver, port.control.id, port.portIndex,
+                catRtsOnConnect, cdcDtrOnConnect) { type, request, value, index ->
+                opened.controlTransfer(type, request, value, index, null, 0, IO_TIMEOUT_MILLIS)
+            }
+            if (!released) diagnostics.record(ControlDiagnosticSource.RADIO, "usb/ptt",
+                "Could not return the PTT line to its idle level", ControlDiagnosticSeverity.ERROR)
+            return
+        }
         if (flowControl != SerialUsbFlow.NONE) runCatching {
             val transfer: UsbControlTransfer = { type, request, value, index, bytes ->
                 opened.controlTransfer(type, request, value, index, bytes, bytes?.size ?: 0, IO_TIMEOUT_MILLIS)
@@ -660,6 +698,21 @@ internal fun ch34xModemControl(rts: Boolean, dtr: Boolean): Int =
     0xFFFF and ((if (dtr) 0x20 else 0) or (if (rts) 0x40 else 0)).inv()
 
 /** Release static modem outputs before closing the host handle; close alone need not reset a bridge. */
+internal fun writeUsbSerialControlLines(
+    driver: UsbSerialDriverKind,
+    controlInterfaceId: Int,
+    portIndex: Int,
+    rts: Boolean,
+    dtr: Boolean,
+    transfer: (type: Int, request: Int, value: Int, index: Int) -> Int
+): Boolean = when (driver) {
+    UsbSerialDriverKind.CDC_ACM -> transfer(0x21, 0x22, cdcControlLineState(dtr, rts), controlInterfaceId)
+    UsbSerialDriverKind.PROLIFIC -> transfer(0x21, 0x22, cdcControlLineState(dtr, rts), 0)
+    UsbSerialDriverKind.CP210X -> transfer(0x41, 0x07, cp210xModemControl(rts, dtr), portIndex)
+    UsbSerialDriverKind.FTDI -> transfer(0x40, 0x01, ftdiModemControl(rts, dtr), portIndex + 1)
+    UsbSerialDriverKind.CH34X -> transfer(0x40, 0xA4, ch34xModemControl(rts, dtr), 0)
+} == 0
+
 internal fun releaseUsbSerialControlLines(
     driver: UsbSerialDriverKind,
     controlInterfaceId: Int,

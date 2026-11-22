@@ -206,7 +206,9 @@ class MainContainer(
         com.rtbishop.look4sat.core.data.audio.RecordingService(context,appScope,settingsRepo,localAudioHub,
             routedAudioHub,n76ReceivePcm,{radioAudioSession.state.value},{radioTrackingService},diagnostics=controlDiagnostics)
     }
-    override val ft4Service: IFt4Service by lazy { Ft4Service(appScope,audioHub,disciplinedClock) }
+    override val ft4Service: IFt4Service by lazy {
+        Ft4Service(appScope, audioHub, disciplinedClock, protectCat = sharedRadioTrackingService::protectFt4Waveforms)
+    }
     override val jttyService by lazy {
         com.rtbishop.look4sat.core.data.jtty.JttyService(appScope,audioHub,nowMillis=disciplinedClock::nowMillis,stopOtherModes={
             ft4AudioTransmitter.stop();ft4Service.stopReceiving()

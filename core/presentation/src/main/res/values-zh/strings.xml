@@ -1067,4 +1067,16 @@
     <string name="log_identity_mismatch">与 %1$s 上传台站不一致：%2$s</string>
     <string name="log_identity_callsign">呼号 %1$s／台站 %2$s</string>
     <string name="log_identity_grid">网格 %1$s／台站 %2$s</string>
+    <string name="rc_ptt_method">PTT 方式</string>
+    <string name="rc_ptt_cat">电台 CAT</string>
+    <string name="rc_ptt_same_port">CAT 口 RTS/DTR</string>
+    <string name="rc_ptt_separate_port">独立 USB 口 RTS/DTR</string>
+    <string name="rc_ptt_vox">音频 VOX</string>
+    <string name="rc_ptt_receive_only">仅接收</string>
+    <string name="rc_ptt_select_port">选择 USB PTT 端口</string>
+    <string name="rc_ptt_active_high">高电平有效</string>
+    <string name="rc_ptt_active_low">低电平有效</string>
+    <string name="rc_ptt_vox_release">VOX 释放等待（毫秒）</string>
+    <string name="rc_ptt_no_cat">无 CAT</string>
+    <string name="rc_independent_rx_cat">单独配置 RX CAT</string>
 </resources>

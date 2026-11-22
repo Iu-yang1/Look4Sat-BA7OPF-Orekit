@@ -17,6 +17,8 @@
  */
 package com.rtbishop.look4sat.core.data.framework
 
+import kotlinx.coroutines.currentCoroutineContext
+
 import android.bluetooth.BluetoothManager
 import android.util.Log
 import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSeverity
@@ -54,7 +56,8 @@ class Ic705Controller(
     ),
     private val variant: IcomCivVariant = IcomCivVariant.IC705,
     dedicatedSatelliteMode: Boolean = variant != IcomCivVariant.IC705,
-    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
+    private val sharedBus: Boolean = false
 ) : IRadioController {
 
     private val tag = when (variant) {
@@ -62,11 +65,15 @@ class Ic705Controller(
         IcomCivVariant.IC9700 -> "IC9700"
         IcomCivVariant.IC910 -> "IC910"
         IcomCivVariant.IC820 -> "IC820"
+        else -> variant.name
     }
     private val usesDedicatedSatelliteMode = dedicatedSatelliteMode &&
-        (variant == IcomCivVariant.IC9700 || variant == IcomCivVariant.IC910)
+        variant in setOf(IcomCivVariant.IC9700, IcomCivVariant.IC910, IcomCivVariant.IC9100, IcomCivVariant.IC821)
     private val usesManualVfoSelection = usesDedicatedSatelliteMode ||
         variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820
+    private val supportsData = variant !in setOf(IcomCivVariant.IC910, IcomCivVariant.IC820,
+        IcomCivVariant.IC821, IcomCivVariant.LEGACY_SINGLE_LEG)
+    private val supportsTone = variant !in setOf(IcomCivVariant.IC820, IcomCivVariant.IC821, IcomCivVariant.LEGACY_SINGLE_LEG)
     private val ioMutex = Mutex()
     private var civSession: Ic705CivSession? = null
     private var duplexModeEnabled = false
@@ -134,7 +141,7 @@ class Ic705Controller(
             }
             handshaking = variant == IcomCivVariant.IC705
             do {
-                if (variant == IcomCivVariant.IC705) {
+                if (variant == IcomCivVariant.IC705 && !sharedBus) {
                     civSession = Ic705CivSession(transport, civAddress, diagnostics, disconnected = { isConnected = false })
                 }
                 diagnose("connect/probe", "model=$tag mode=${transport.connectionDescription} address=0x${"%02X".format(civAddress.toInt() and 0xFF)}")
@@ -142,7 +149,8 @@ class Ic705Controller(
                     IcomCivVariant.IC705 -> probeReadOnlyConnection()
                     // Do not send 07 without a selector: it can leave the operator's
                     // satellite preset. The IC-820H has no CI-V SAT-mode command.
-                    IcomCivVariant.IC820 -> readFrequencyAndMode() != null
+                     IcomCivVariant.IC820, IcomCivVariant.IC821, IcomCivVariant.IC9100,
+                     IcomCivVariant.SINGLE_LEG, IcomCivVariant.LEGACY_SINGLE_LEG -> readFrequencyAndMode() != null
                     else -> ioMutex.withLock {
                         sendAndWaitAck(IcomCivProtocol.buildEnterVfoModeCommand())
                     } && readFrequencyAndMode() != null
@@ -256,25 +264,42 @@ class Ic705Controller(
         Log.d(tag, "setMode: $mode")
         Log.d(tag, "CMD setMode → ${commandHex(cmd)}")
         ioMutex.withLock {
-            sendAndWaitAck(cmd) &&
-                (variant != IcomCivVariant.IC820 || readModeLocked() == normalizedMode(mode))
+            val applied = sendAndWaitAck(cmd)
+            if (!applied) return@withLock false
+            if (variant in setOf(IcomCivVariant.IC9100, IcomCivVariant.SINGLE_LEG)) {
+                setAndReadLegacyDataModeLocked(IcomCivProtocol.isDataMode(mode))
+            } else if (variant in setOf(IcomCivVariant.IC820, IcomCivVariant.IC821, IcomCivVariant.LEGACY_SINGLE_LEG)) {
+                readModeLocked() == normalizedMode(mode)
+            } else true
         }
+    }
+
+    private suspend fun setAndReadLegacyDataModeLocked(enabled: Boolean): Boolean {
+        val command = IcomCivProtocol.buildDataModeCommand(enabled)
+        if (!sendAndWaitAck(command)) return false
+        val response = sendAndReadResponse(
+            IcomCivProtocol.buildReadDataModeCommand(), IcomCivProtocol.CMD_MEMORY_CONTROL
+        ) { it.firstOrNull() == IcomCivProtocol.SUB_DATA_MODE } ?: return false
+        return IcomCivProtocol.parseDataModeState(response) == enabled
     }
 
     override suspend fun setDataMode(enabled: Boolean, baseMode: String): Boolean =
         withContext(Dispatchers.IO) {
-            if (variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820) return@withContext !enabled
+            if (!supportsData) return@withContext !enabled
             if (variant == IcomCivVariant.IC705) return@withContext ioMutex.withLock {
                 setIc705DataModeLocked(true, enabled, baseMode)
             }
             val command = IcomCivProtocol.buildDataModeCommand(enabled)
             Log.d(tag, "CMD DATA ${if (enabled) "ON" else "OFF"} → ${commandHex(command)}")
-            ioMutex.withLock { sendAndWaitAck(command) }
+            ioMutex.withLock {
+                if (variant in setOf(IcomCivVariant.IC9100, IcomCivVariant.SINGLE_LEG))
+                    setAndReadLegacyDataModeLocked(enabled) else sendAndWaitAck(command)
+            }
         }
 
     override suspend fun setTxDataMode(enabled: Boolean, baseMode: String): Boolean =
         withContext(Dispatchers.IO) {
-            if (variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820) return@withContext !enabled
+            if (!supportsData) return@withContext !enabled
             if (variant == IcomCivVariant.IC705) return@withContext ioMutex.withLock {
                 setIc705DataModeLocked(false, enabled, baseMode)
             }
@@ -282,7 +307,8 @@ class Ic705Controller(
                 var rxRestored = false
                 val configured = try {
                     sendAndWaitAck(selectVfoCommand(vfoA = false)) &&
-                        sendAndWaitAck(IcomCivProtocol.buildDataModeCommand(enabled))
+                        (if (variant == IcomCivVariant.IC9100) setAndReadLegacyDataModeLocked(enabled)
+                        else sendAndWaitAck(IcomCivProtocol.buildDataModeCommand(enabled)))
                 } finally {
                     rxRestored = restoreRxVfo()
                 }
@@ -291,7 +317,7 @@ class Ic705Controller(
         }
 
     override suspend fun setCtcssMode(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
-        if (variant == IcomCivVariant.IC820) return@withContext !enabled
+        if (!supportsTone) return@withContext !enabled
         Log.d(tag, "setCtcssMode: $enabled")
         val cmd = IcomCivProtocol.buildCtcssModeCommand(enabled)
         Log.d(tag, "CMD ctcssMode → ${commandHex(cmd)}")
@@ -302,7 +328,7 @@ class Ic705Controller(
     }
 
     override suspend fun setCtcssTone(toneHz: Double): Boolean = withContext(Dispatchers.IO) {
-        if (variant == IcomCivVariant.IC820) return@withContext false
+        if (!supportsTone) return@withContext false
         Log.d(tag, "setCtcssTone: ${toneHz}Hz")
         val cmd = IcomCivProtocol.buildSetCtcssToneCommand(toneHz)
         Log.d(tag, "CMD ctcssTone → ${commandHex(cmd)}")
@@ -333,11 +359,12 @@ class Ic705Controller(
     }
 
     override suspend fun pttOn(): Boolean = withContext(Dispatchers.IO) {
-        if (variant == IcomCivVariant.IC820) return@withContext false
+        if (!supportsPttReadback) return@withContext false
         ioMutex.withLock { setPttAndConfirm(enabled = true) }
     }
 
-    override val supportsPttReadback get() = variant != IcomCivVariant.IC820
+    override val supportsPttReadback get() =
+        variant !in setOf(IcomCivVariant.IC820, IcomCivVariant.IC821, IcomCivVariant.LEGACY_SINGLE_LEG)
     override suspend fun readPttState(): Boolean? = withContext(Dispatchers.IO) {
         if (!supportsPttReadback) return@withContext null
         ioMutex.withLock {
@@ -349,7 +376,7 @@ class Ic705Controller(
 
     override suspend fun pttOff(): Boolean = withContext(Dispatchers.IO) {
         // Cannot stop or confirm a transmission keyed by an external interface.
-        if (variant == IcomCivVariant.IC820) return@withContext false
+        if (!supportsPttReadback) return@withContext false
         ioMutex.withLock { setPttAndConfirm(enabled = false) }
     }
 
@@ -570,6 +597,19 @@ class Ic705Controller(
             if (ic820Band(rxHz) == null || (txHz != null && ic820Band(txHz) == null))
                 return@withContext FrequencyPairResult.FAILED
             ioMutex.withLock {
+                val budget = currentCoroutineContext()[Ft4CatBudget]
+                if (budget != null) {
+                    val minimum = when {
+                        !ic820PairReady -> return@withLock FrequencyPairResult.HELD
+                        ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES && !ic820FastSubAccess ->
+                            return@withLock FrequencyPairResult.HELD
+                        ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES ||
+                            ic820FastSubAccess && System.nanoTime() - ic820LastAuditNanos >= IC820_AUDIT_INTERVAL_NANOS -> 1_150L
+                        ic820FastSubAccess -> 550L
+                        else -> 850L
+                    }
+                    if (budget.remainingMillis() < minimum) return@withLock FrequencyPairResult.HELD
+                }
                 tuneIc820FastLocked(rxHz, txHz)?.let { return@withLock it }
                 val startedNanos = System.nanoTime()
                 val mainAccess = IcomCivProtocol.buildIc820BandAccessCommand(main = true)
@@ -740,6 +780,7 @@ class Ic705Controller(
      * Enable or disable SPLIT mode (TX on sub-VFO while listening on main VFO).
      */
     override suspend fun setSplitMode(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (variant == IcomCivVariant.IC821) return@withContext enabled == usesDedicatedSatelliteMode
         ioMutex.withLock {
             val configured = if (usesDedicatedSatelliteMode) {
                 if (enabled && !setOrdinarySplitLocked(enabled = false)) {
@@ -747,7 +788,7 @@ class Ic705Controller(
                 }
                 setDedicatedSatelliteModeLocked(enabled)
             } else {
-                if ((variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC9700) &&
+                if (variant in setOf(IcomCivVariant.IC910, IcomCivVariant.IC9700, IcomCivVariant.IC9100) &&
                     !setDedicatedSatelliteModeLocked(enabled = false)) {
                     // Fallback must remain usable even when the optional SAT command is unsupported.
                     Log.w(tag, "Satellite mode OFF was not verified; continuing with ordinary split")
@@ -883,6 +924,18 @@ class Ic705Controller(
     override suspend fun readWorkingFrequency(): Long? = withContext(Dispatchers.IO) {
         if (variant == IcomCivVariant.IC820) return@withContext ioMutex.withLock {
             val readyBeforeRead = ic820PairReady
+            if (ic820FastSubAccess) {
+                val main = IcomCivProtocol.buildIc820BandAccessCommand(main = true)
+                val sub = IcomCivProtocol.buildIc820BandAccessCommand(main = false)
+                var restored = false
+                val frequency = try {
+                    if (sendAndWaitAck(sub)) readFrequencyLocked() else null
+                } finally {
+                    restored = withContext(NonCancellable) { sendAndWaitAck(main) }
+                }
+                ic820PairReady = readyBeforeRead && restored && frequency == ic820LastRxHz
+                return@withLock frequency?.takeIf { restored }
+            }
             val (restored, frequency) = ic820WithSubAsMainLocked { readFrequencyLocked() }
             ic820PairReady = readyBeforeRead && restored && frequency != null && frequency == ic820LastRxHz
             frequency.takeIf { restored }
@@ -1179,6 +1232,8 @@ class Ic705Controller(
         // Its D0/D1 CI-V access selectors are inverted relative to newer Icoms.
         variant == IcomCivVariant.IC820 ->
             IcomCivProtocol.buildIc820BandAccessCommand(main = !vfoA)
+        variant == IcomCivVariant.IC821 && usesDedicatedSatelliteMode ->
+            if (vfoA) IcomCivProtocol.buildSelectSubCommand() else IcomCivProtocol.buildSelectMainCommand()
         !usesDedicatedSatelliteMode -> if (vfoA) {
             IcomCivProtocol.buildSelectVfoACommand()
         } else {
@@ -1282,7 +1337,7 @@ class Ic705Controller(
         val responseSubcommand: Byte
         val writeCommand: ByteArray
         val readCommand: ByteArray
-        if (variant == IcomCivVariant.IC9700) {
+        if (variant == IcomCivVariant.IC9700 || variant == IcomCivVariant.IC9100) {
             responseCommand = IcomCivProtocol.CMD_MISC_SETTING
             responseSubcommand = IcomCivProtocol.SUB_SATELLITE_MODE
             writeCommand = IcomCivProtocol.buildSatelliteModeCommand(enabled)

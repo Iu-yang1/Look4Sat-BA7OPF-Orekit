@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import com.rtbishop.look4sat.core.domain.ft4.Ft4TransmitState
+import com.rtbishop.look4sat.core.domain.ft4.Ft4CatWindow
 import com.rtbishop.look4sat.core.domain.ft4.Ft4PlaybackTiming
 import com.rtbishop.look4sat.core.domain.ft4.Ft4TransmissionRequest
 import com.rtbishop.look4sat.core.domain.ft4.Ft4TransmissionProgress
@@ -77,6 +78,9 @@ class Ft4AudioTransmitter(
         activeJob = coroutineContext[Job]
         var lease: TxLease? = null
         var output: Ft4AudioOutput? = null
+        val catProtection = coordinator.protectFt4Waveforms()
+        val catWindow = Ft4CatWindow(request.slotStartUtcMillis)
+        val reservation = coordinator.reserveFt4TransmitWindow(catWindow)
         try {
             require(request.audioFrequencyHz in 0f..3_000f) { "FT4 audio frequency is outside 0-3000 Hz" }
             require(request.volume in 0f..1f) { "FT4 output volume is outside 0-1" }
@@ -105,6 +109,8 @@ class Ft4AudioTransmitter(
             output.prepare(waveform)
 
             waitUntil(request, timing.before(prepareLeadMillis))
+            val untilCatWindow = catWindow.startUtcMillis - clock.nowMillis()
+            if (untilCatWindow > 0) waitUntil(request, TransmissionTiming.from(clock.snapshot(), catWindow.startUtcMillis))
             checkCurrentIntent(request)
             checkAutomaticClock(request)
             checkNotMissed(timing, "before radio preparation")
@@ -115,7 +121,9 @@ class Ft4AudioTransmitter(
                     waveformDurationMillis = specification.durationMillis,
                     expectedSatelliteCatalogNumber = request.satelliteCatalogNumber,
                     expectedTransponderUuid = request.transponderUuid,
-                    automatic = request.automatic
+                    automatic = request.automatic,
+                    ft4CatWindow = catWindow,
+                    keyingDeadlineNanos = timing.targetMonotonicNanos
                 )
             )
             checkCurrentIntent(request)
@@ -168,6 +176,8 @@ class Ft4AudioTransmitter(
                 }.isSuccess
                 if (!released) runCatching { coordinator.emergencyPttOff() }
             }
+            reservation.close()
+            catProtection.close()
             activeJob = null
             if (mutableState.value !is Ft4TransmitState.Failed) {
                 mutableState.value = Ft4TransmitState.Idle

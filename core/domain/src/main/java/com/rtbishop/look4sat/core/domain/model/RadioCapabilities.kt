@@ -60,7 +60,39 @@ object RadioModelCatalog {
         RadioBand.TWENTY_THREE_CENTIMETERS
     )
 
+    private fun icomSingleLeg(
+        model: String, address: Int, baudRates: List<Int>, bands: Set<RadioBand>, data: Boolean, ptt: Boolean
+    ) = RadioModelDescriptor(model, RadioProtocolFamily.ICOM_CIV,
+        RadioCapabilities(false, false, true, false, false, data, ptt, false, false, bands),
+        baudRates, 1, address)
+
     private val descriptors = listOf(
+        RadioModelDescriptor(RadioControlSettings.MODEL_YAESU_FT847, RadioProtocolFamily.YAESU_CAT,
+            RadioCapabilities(true, false, true, true, true, false, true, true, false, hfVhfUhfBands),
+            listOf(4_800, 9_600, 57_600), 2),
+        RadioModelDescriptor(RadioControlSettings.MODEL_YAESU_FT991, RadioProtocolFamily.YAESU_ASCII_CAT,
+            RadioCapabilities(false, false, true, false, false, true, true, true, false, hfVhfUhfBands),
+            listOf(38_400, 4_800, 9_600, 19_200), 2),
+        RadioModelDescriptor(RadioControlSettings.MODEL_ICOM_IC9100, RadioProtocolFamily.ICOM_CIV,
+            RadioCapabilities(true, false, true, true, true, true, true, false, true,
+                hfVhfUhfBands + RadioBand.TWENTY_THREE_CENTIMETERS),
+            listOf(19_200, 9_600, 4_800, 1_200, 300), 1, 0x7C),
+        RadioModelDescriptor(RadioControlSettings.MODEL_ICOM_IC821, RadioProtocolFamily.ICOM_CIV,
+            RadioCapabilities(true, false, true, true, false, false, false, false, false,
+                setOf(RadioBand.TWO_METERS, RadioBand.SEVENTY_CENTIMETERS)),
+            listOf(19_200, 9_600, 4_800, 1_200, 300), 1, 0x4C),
+        icomSingleLeg(RadioControlSettings.MODEL_ICOM_IC7300, 0x94, listOf(115_200, 19_200, 9_600, 4_800),
+            setOf(RadioBand.HF, RadioBand.SIX_METERS), data = true, ptt = true),
+        icomSingleLeg(RadioControlSettings.MODEL_ICOM_IC905, 0xAC, listOf(115_200, 19_200, 9_600, 4_800),
+            satelliteBands, data = true, ptt = true),
+        icomSingleLeg(RadioControlSettings.MODEL_ICOM_IC7100, 0x88, listOf(19_200, 9_600, 4_800),
+            hfVhfUhfBands, data = true, ptt = true),
+        icomSingleLeg(RadioControlSettings.MODEL_ICOM_IC706, 0x48, listOf(19_200, 9_600, 4_800, 1_200, 300),
+            hfVhfUhfBands - RadioBand.SEVENTY_CENTIMETERS, data = false, ptt = false),
+        icomSingleLeg(RadioControlSettings.MODEL_ICOM_IC706MKII, 0x4C, listOf(19_200, 9_600, 4_800, 1_200, 300),
+            hfVhfUhfBands - RadioBand.SEVENTY_CENTIMETERS, data = false, ptt = false),
+        icomSingleLeg(RadioControlSettings.MODEL_ICOM_IC706MKIIG, 0x58, listOf(19_200, 9_600, 4_800, 1_200, 300),
+            hfVhfUhfBands, data = false, ptt = false),
         RadioModelDescriptor(
             model = RadioControlSettings.MODEL_YAESU_FT817,
             protocolFamily = RadioProtocolFamily.YAESU_CAT,

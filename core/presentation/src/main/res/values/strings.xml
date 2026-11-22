@@ -1115,4 +1115,16 @@
     <string name="log_identity_mismatch">%1$s upload identity differs: %2$s</string>
     <string name="log_identity_callsign">Callsign %1$s / station %2$s</string>
     <string name="log_identity_grid">Grid %1$s / station %2$s</string>
+    <string name="rc_ptt_method">PTT method</string>
+    <string name="rc_ptt_cat">Radio CAT</string>
+    <string name="rc_ptt_same_port">RTS/DTR on CAT port</string>
+    <string name="rc_ptt_separate_port">Separate USB RTS/DTR</string>
+    <string name="rc_ptt_vox">Audio VOX</string>
+    <string name="rc_ptt_receive_only">Receive only</string>
+    <string name="rc_ptt_select_port">Select USB PTT port</string>
+    <string name="rc_ptt_active_high">Active high</string>
+    <string name="rc_ptt_active_low">Active low</string>
+    <string name="rc_ptt_vox_release">VOX release (ms)</string>
+    <string name="rc_ptt_no_cat">No CAT</string>
+    <string name="rc_independent_rx_cat">Separate RX CAT settings</string>
 </resources>

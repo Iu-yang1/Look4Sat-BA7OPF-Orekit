@@ -22,7 +22,11 @@ enum class IcomCivVariant {
     IC705,
     IC9700,
     IC910,
-    IC820
+    IC820,
+    IC9100,
+    IC821,
+    SINGLE_LEG,
+    LEGACY_SINGLE_LEG
 }
 
 data class RadioProfile(
@@ -34,6 +38,8 @@ data class RadioProfile(
     val capabilities: RadioCapabilities,
     val isL4s: Boolean = false,
     val isFtx1: Boolean = false,
+    val isFt847: Boolean = false,
+    val isFt991: Boolean = false,
     val isN76: Boolean = false
 ) {
     val isIcom: Boolean get() = icomVariant != null
@@ -46,6 +52,10 @@ data class RadioProfile(
 fun radioProfile(model: String, civAddressOverride: Int? = null): RadioProfile {
     val descriptor = radioModelDescriptor(model)
     val profile = when (descriptor.model) {
+        RadioControlSettings.MODEL_YAESU_FT847 -> RadioProfile(descriptor.model,
+            serialStopBits = descriptor.serialStopBits, capabilities = descriptor.capabilities, isFt847 = true)
+        RadioControlSettings.MODEL_YAESU_FT991 -> RadioProfile(descriptor.model,
+            serialStopBits = descriptor.serialStopBits, capabilities = descriptor.capabilities, isFt991 = true)
         RadioControlSettings.MODEL_VERO_N76 -> RadioProfile(
             model = descriptor.model, capabilities = descriptor.capabilities, isN76 = true
         )
@@ -94,7 +104,17 @@ fun radioProfile(model: String, civAddressOverride: Int? = null): RadioProfile {
             serialStopBits = descriptor.serialStopBits,
             isL4s = true
         )
-        else -> RadioProfile(
+        else -> if (descriptor.defaultCivAddress != null) RadioProfile(
+            model = descriptor.model,
+            icomVariant = when (descriptor.model) {
+                RadioControlSettings.MODEL_ICOM_IC9100 -> IcomCivVariant.IC9100
+                RadioControlSettings.MODEL_ICOM_IC821 -> IcomCivVariant.IC821
+                else -> if (descriptor.capabilities.dataMode) IcomCivVariant.SINGLE_LEG else IcomCivVariant.LEGACY_SINGLE_LEG
+            },
+            civAddress = checkNotNull(descriptor.defaultCivAddress).toByte(),
+            serialStopBits = descriptor.serialStopBits,
+            capabilities = descriptor.capabilities
+        ) else RadioProfile(
             model = RadioControlSettings.MODEL_YAESU_FT817,
             yaesuVariant = YaesuCatVariant.FT817,
             serialStopBits = descriptor.serialStopBits,

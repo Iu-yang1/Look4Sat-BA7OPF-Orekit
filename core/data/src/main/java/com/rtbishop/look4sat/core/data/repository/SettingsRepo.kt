@@ -1498,6 +1498,20 @@ class SettingsRepo(
             putBoolean(keyRadioCatRts, normalized.catRts)
             putBoolean(keyRadioCatDtr, normalized.catDtr)
             putString(keyRadioUsbFlow, normalized.usbFlowControl.name)
+            putString("radioPttMethod", normalized.pttMethod.name)
+            putString("radioPttUsbAddress", normalized.ptt.usbAddress)
+            putString("radioPttLine", normalized.ptt.line.name)
+            putBoolean("radioPttActiveHigh", normalized.ptt.activeHigh)
+            putLong("radioVoxReleaseMillis", normalized.ptt.voxReleaseMillis)
+            val rx = normalized.rxEndpoint
+            if (rx == null) remove("radioRxEndpointModel")
+            else {
+                putString("radioRxEndpointModel", rx.model)
+                putString("radioRxEndpointTransport", rx.transport)
+                putInt("radioRxEndpointBaud", rx.baudRate)
+                putInt("radioRxEndpointCivAddress", rx.civAddress ?: -1)
+                putString("radioRxEndpointTcpProtocol", rx.tcpProtocol)
+            }
             putBoolean(keyRadioSplitMode, normalized.splitMode)
             putString(keyRadioCatTransport, normalized.catTransport)
             putString(keyRadioDuplexMode, normalized.duplexMode)
@@ -1568,7 +1582,35 @@ class SettingsRepo(
             l4sCorrectionEditStepHz = preferences.getLong(keyRadioCorrectionStep,10).coerceIn(10,1000)/10*10,
             n76BluetoothAudio = preferences.getBoolean(keyN76BluetoothAudio, false),
             n76Options = n76OptionsFromJson(preferences.getString(keyN76Options, null)),
-            radioAudio = getRadioAudioSettings(model)
+            radioAudio = getRadioAudioSettings(model),
+            ptt = com.rtbishop.look4sat.core.domain.model.RadioPttSettings(
+                method = com.rtbishop.look4sat.core.domain.model.RadioPttMethod.entries.firstOrNull {
+                    it.name == preferences.getString("radioPttMethod", null)
+                } ?: com.rtbishop.look4sat.core.domain.model.RadioPttMethod.CAT,
+                usbAddress = preferences.getString("radioPttUsbAddress", "").orEmpty(),
+                line = com.rtbishop.look4sat.core.domain.model.RadioPttLine.entries.firstOrNull {
+                    it.name == preferences.getString("radioPttLine", null)
+                } ?: com.rtbishop.look4sat.core.domain.model.RadioPttLine.RTS,
+                activeHigh = preferences.getBoolean("radioPttActiveHigh", true),
+                voxReleaseMillis = preferences.getLong("radioVoxReleaseMillis", 350L).coerceIn(0, 2_000)
+            ),
+            rxEndpoint = preferences.getString("radioRxEndpointModel", null)
+                ?.takeIf { it in RadioControlSettings.SUPPORTED_RADIOS }
+                ?.let { rxModel ->
+                    val baudRates = com.rtbishop.look4sat.core.domain.model.supportedRadioBaudRates(rxModel)
+                    com.rtbishop.look4sat.core.domain.model.RadioRxEndpoint(
+                        model = rxModel,
+                        transport = preferences.getString("radioRxEndpointTransport", null)
+                            ?.takeIf { it in RadioControlSettings.SUPPORTED_TRANSPORTS && it != RadioControlSettings.TRANSPORT_VOX }
+                            ?: RadioControlSettings.TRANSPORT_USB,
+                        baudRate = preferences.getInt("radioRxEndpointBaud", baudRates.first())
+                            .takeIf { it in baudRates } ?: baudRates.first(),
+                        civAddress = preferences.getInt("radioRxEndpointCivAddress", -1).takeIf { it in 0..0xFF },
+                        tcpProtocol = preferences.getString("radioRxEndpointTcpProtocol", null)
+                            ?.takeIf { it in RadioControlSettings.SUPPORTED_TCP_PROTOCOLS }
+                            ?: RadioControlSettings.TCP_PROTOCOL_RAW_CAT
+                    )
+                }
         )
     }
     //endregion

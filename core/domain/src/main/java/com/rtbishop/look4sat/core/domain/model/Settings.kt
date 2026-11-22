@@ -158,6 +158,26 @@ data class LoTWSettings(
     val isConfigured: Boolean get() = callsign.isNotBlank() && password.isNotBlank()
 }
 
+enum class RadioPttMethod { CAT, USB_CAT, USB_SEPARATE, VOX, RECEIVE_ONLY }
+
+enum class RadioPttLine { RTS, DTR }
+
+data class RadioPttSettings(
+    val method: RadioPttMethod = RadioPttMethod.CAT,
+    val usbAddress: String = "",
+    val line: RadioPttLine = RadioPttLine.RTS,
+    val activeHigh: Boolean = true,
+    val voxReleaseMillis: Long = 350L
+)
+
+data class RadioRxEndpoint(
+    val model: String,
+    val transport: String,
+    val baudRate: Int,
+    val civAddress: Int?,
+    val tcpProtocol: String
+)
+
 data class RadioControlSettings(
     val enabled: Boolean,
     val radioModel: String,
@@ -194,16 +214,42 @@ data class RadioControlSettings(
     val catRts: Boolean = false,
     val catDtr: Boolean = false,
     val usbFlowControl: com.rtbishop.look4sat.core.domain.control.SerialUsbFlow =
-        com.rtbishop.look4sat.core.domain.control.SerialUsbFlow.NONE
+        com.rtbishop.look4sat.core.domain.control.SerialUsbFlow.NONE,
+    val ptt: RadioPttSettings = RadioPttSettings(
+        method = if (catTransport == TRANSPORT_VOX) RadioPttMethod.VOX else RadioPttMethod.CAT
+    ),
+    val rxEndpoint: RadioRxEndpoint? = null
 ) {
+    val pttMethod: RadioPttMethod
+        get() = if (catTransport == TRANSPORT_VOX && ptt.method == RadioPttMethod.CAT) RadioPttMethod.VOX else ptt.method
+
+    fun forRxEndpoint(): RadioControlSettings {
+        val rx = rxEndpoint ?: return this
+        return copy(radioModel = rx.model, catTransport = rx.transport, baudRate = rx.baudRate,
+            civAddress = rx.civAddress, tcpProtocol = rx.tcpProtocol, splitMode = false,
+            radioAudio = com.rtbishop.look4sat.core.domain.audio.RadioAudioSettings(),
+            catRts = false, catDtr = false,
+            usbFlowControl = com.rtbishop.look4sat.core.domain.control.SerialUsbFlow.NONE)
+    }
+
     companion object {
         const val MODEL_YAESU_FT817 = "Yaesu FT-817/818"
         const val MODEL_YAESU_FT857 = "Yaesu FT-857/897"
         const val MODEL_YAESU_FTX1 = "Yaesu FTX-1"
+        const val MODEL_YAESU_FT847 = "Yaesu FT-847"
+        const val MODEL_YAESU_FT991 = "Yaesu FT-991/991A"
         const val MODEL_ICOM_IC705 = "Icom IC-705"
         const val MODEL_ICOM_IC9700 = "Icom IC-9700"
         const val MODEL_ICOM_IC910 = "Icom IC-910/D/H"
         const val MODEL_ICOM_IC820 = "Icom IC-820"
+        const val MODEL_ICOM_IC821 = "Icom IC-821H"
+        const val MODEL_ICOM_IC9100 = "Icom IC-9100"
+        const val MODEL_ICOM_IC7300 = "Icom IC-7300"
+        const val MODEL_ICOM_IC905 = "Icom IC-905"
+        const val MODEL_ICOM_IC7100 = "Icom IC-7100"
+        const val MODEL_ICOM_IC706 = "Icom IC-706"
+        const val MODEL_ICOM_IC706MKII = "Icom IC-706MKII"
+        const val MODEL_ICOM_IC706MKIIG = "Icom IC-706MKIIG"
         const val MODEL_QUANSHENG_UVK1 = "Quansheng UV-K1 (L4S)"
         const val MODEL_QUANSHENG_UVK5V3 = "Quansheng UV-K5 V3 (L4S)"
         const val MODEL_VERO_N76 = "Vero VR-N76"

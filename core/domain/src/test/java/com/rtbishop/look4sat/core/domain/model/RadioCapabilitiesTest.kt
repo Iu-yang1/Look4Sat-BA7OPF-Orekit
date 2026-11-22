@@ -27,6 +27,16 @@ class RadioCapabilitiesTest {
     fun catalogDefinesEverySupportedModelExactlyOnce() {
         assertEquals(
             listOf(
+                RadioControlSettings.MODEL_YAESU_FT847,
+                RadioControlSettings.MODEL_YAESU_FT991,
+                RadioControlSettings.MODEL_ICOM_IC9100,
+                RadioControlSettings.MODEL_ICOM_IC821,
+                RadioControlSettings.MODEL_ICOM_IC7300,
+                RadioControlSettings.MODEL_ICOM_IC905,
+                RadioControlSettings.MODEL_ICOM_IC7100,
+                RadioControlSettings.MODEL_ICOM_IC706,
+                RadioControlSettings.MODEL_ICOM_IC706MKII,
+                RadioControlSettings.MODEL_ICOM_IC706MKIIG,
                 RadioControlSettings.MODEL_YAESU_FT817,
                 RadioControlSettings.MODEL_YAESU_FT857,
                 RadioControlSettings.MODEL_YAESU_FTX1,

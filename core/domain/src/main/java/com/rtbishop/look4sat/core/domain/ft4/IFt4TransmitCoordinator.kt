@@ -22,7 +22,9 @@ data class TxRequest(
     val automatic: Boolean,
     val maximumPttMillis: Long = 8_500L,
     val mode: DigitalTransmitMode = DigitalTransmitMode.FT4,
-    val diagnosticAudio: Boolean = false
+    val diagnosticAudio: Boolean = false,
+    val ft4CatWindow: Ft4CatWindow? = null,
+    val keyingDeadlineNanos: Long? = null
 )
 
 data class TxLease(
@@ -40,7 +42,10 @@ data class TxLease(
     val automatic: Boolean,
     /** True when transmit is controlled by the radio's external VOX circuit. */
     val usesVox: Boolean = false,
-    val diagnostic: Boolean = false
+    val diagnostic: Boolean = false,
+    val usbPtt: Boolean = false,
+    val voxReleaseMillis: Long = 0L,
+    val keyingDeadlineNanos: Long? = null
 )
 
 interface IDigitalTransmitCoordinator {
@@ -53,4 +58,7 @@ interface IDigitalTransmitCoordinator {
 }
 
 /** Compatibility boundary for the existing FT4 callers. */
-interface IFt4TransmitCoordinator : IDigitalTransmitCoordinator
+interface IFt4TransmitCoordinator : IDigitalTransmitCoordinator {
+    fun protectFt4Waveforms(): AutoCloseable = AutoCloseable {}
+    fun reserveFt4TransmitWindow(window: Ft4CatWindow): AutoCloseable = AutoCloseable {}
+}

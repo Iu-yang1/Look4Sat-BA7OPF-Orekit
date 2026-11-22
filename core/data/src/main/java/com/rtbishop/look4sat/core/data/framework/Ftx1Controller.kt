@@ -19,7 +19,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 class Ftx1Controller(
     private val transport: RadioTransport,
     private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
-    private val replyTimeoutMillis: Long = 1_000L
+    private val replyTimeoutMillis: Long = 1_000L,
+    private val ft991: Boolean = false
 ) : IRadioController {
     private val mutex=Mutex()
     private val decoder=Ftx1CatProtocol.Decoder()
@@ -49,7 +50,7 @@ class Ftx1Controller(
                 diagnostics.record(ControlDiagnosticSource.RADIO,"ftx1/connect/fallback",
                     "Read-only handshake failed; trying remaining RFCOMM mode",ControlDiagnosticSeverity.WARNING)
             } while(transport.connectAlternative())
-            if(ready) {
+            if(ready && !ft991) {
                 val version=query("VE0;","VE0")
                 val number=version?.takeIf { it.matches(Regex("VE0[0-9]{4};")) }?.substring(3,7)?.toIntOrNull()
                 if(number!=null && number<108) {
@@ -64,7 +65,7 @@ class Ftx1Controller(
                 report("connect/failed","FTX-1 read-only handshake failed")
             } else {
                 diagnostics.record(ControlDiagnosticSource.RADIO,"ftx1/connect/ready",
-                    "ID0840; ${transport.connectionDescription} CAT verified")
+                    "${if (ft991) "FT-991/991A" else "FTX-1"} ${transport.connectionDescription} CAT verified")
             }
             connected
         } finally {
@@ -100,10 +101,12 @@ class Ftx1Controller(
         frequency to mode
     }
     override suspend fun setVfo(vfoA: Boolean) = io(false) {
+        if (ft991) return@io vfoA
         val side=if(vfoA) 0 else 1
         verify("VS$side;","VS;","VS","VS$side;").also { if(it) selectedSide=side }
     }
     override suspend fun setSplitMode(enabled: Boolean) = io(false) {
+        if (ft991) return@io !enabled && verify("FT2;", "FT;", "FT", "FT0;")
         // Hamlib's FTX-1 backend routes TX with FT, avoiding ST1's SUB tuning lock.
         val side=if(enabled) 1 else 0
         val applied=verify("ST0;","ST;","ST","ST0;") && verify("FT$side;","FT;","FT","FT$side;")
@@ -141,6 +144,7 @@ class Ftx1Controller(
         return verify(command,"$prefix;",prefix,command)
     }
     private suspend fun ensureVfoMode(side: Int): Boolean {
+        if (ft991) return side == 0
         val value=query("VM$side;","VM$side") ?: return false
         return value=="VM${side}00;" || verify("VM${side}00;","VM$side;","VM$side","VM${side}00;")
     }
@@ -149,6 +153,10 @@ class Ftx1Controller(
         return ensureVfoMode(side) && verify(command,"MD$side;","MD$side",command)
     }
     private suspend fun setToneMode(side: Int, enabled: Boolean): Boolean {
+        if (ft991) {
+            val command = if (enabled) "CT02;" else "CT00;"
+            return verify(command, "CT0;", "CT0", command)
+        }
         val command="CT$side${if(enabled) 1 else 0};"
         return verify(command,"CT$side;","CT$side",command)
     }
@@ -163,7 +171,8 @@ class Ftx1Controller(
         decoder.clear()
         // Identification must not change frequency, mode, power, VFO or TX.
         for(attempt in 1..3) {
-            if(query("ID;","ID") == "ID0840;" && readFrequency(0)!=null) return true
+            val expectedId = if (ft991) "ID0670;" else "ID0840;"
+            if(query("ID;","ID") == expectedId && readFrequency(0)!=null) return true
             if(!linkOpen) break
             if(attempt<3) delay(100L)
         }
