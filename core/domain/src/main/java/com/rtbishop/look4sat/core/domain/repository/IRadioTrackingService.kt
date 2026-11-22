@@ -77,7 +77,8 @@ data class RadioTrackingState(
     val transmitPreparing: Boolean = false,
     val catTransmitStateKnown: Boolean = true,
     val catTransmitting: Boolean = false,
-    val calculatorReference: com.rtbishop.look4sat.core.domain.utility.CalculatorReference? = null
+    val calculatorReference: com.rtbishop.look4sat.core.domain.utility.CalculatorReference? = null,
+    val externalPtt: com.rtbishop.look4sat.core.domain.model.RadioPttMethod? = null
 ) {
     val frequencyEditingLocked get()=trackingPhase==TrackingPhase.INITIALIZING || transmitPreparing || txLeaseId!=null ||
         !catTransmitStateKnown || catTransmitting || pttState!=PttState.OFF || transmitOwner!=RadioTransmitOwner.NONE ||

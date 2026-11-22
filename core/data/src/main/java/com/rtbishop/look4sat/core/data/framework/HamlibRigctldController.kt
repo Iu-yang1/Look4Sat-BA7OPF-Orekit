@@ -26,7 +26,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 class HamlibRigctldController(
     private val endpoint: String,
     private val transport: RadioTransport,
-    private val pttReadbackSupported: Boolean = true
+    private val pttReadbackSupported: Boolean = true,
+    private val receiveOnly: Boolean = false,
+    override val supportsFrequencyControl: Boolean = true
 ) : IRadioController {
 
     private val ioMutex = Mutex()
@@ -82,10 +84,12 @@ class HamlibRigctldController(
     }
 
     override suspend fun setFrequency(frequencyHz: Long): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl) return@withContext false
         ioMutex.withLock { setCommandLocked("\\set_freq $frequencyHz") }
     }
 
     override suspend fun setMode(mode: String): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl) return@withContext false
         val hamlibMode = toHamlibMode(mode) ?: return@withContext false
         val passband = if (mode.equals("FM-N", ignoreCase = true) || mode.equals("NFM", ignoreCase = true)) {
             NARROW_FM_PASSBAND_HZ
@@ -126,6 +130,7 @@ class HamlibRigctldController(
     }
 
     override suspend fun pttOn(): Boolean = withContext(Dispatchers.IO) {
+        if (receiveOnly) return@withContext false
         ioMutex.withLock { setPttLocked(true) }
     }
 
@@ -136,6 +141,7 @@ class HamlibRigctldController(
     }
 
     override suspend fun pttOff(): Boolean = withContext(Dispatchers.IO) {
+        if (receiveOnly) return@withContext false
         ioMutex.withLock { setPttLocked(false) }
     }
 
@@ -188,7 +194,7 @@ class HamlibRigctldController(
                     setCommandLocked("\\set_func TONE 0")
                 }
             } finally {
-                restored = withContext(NonCancellable) { setCommandLocked("\\set_vfo VFOA") }
+                restored = withContext(NonCancellable + Ft4CatBudget.cleanup) { setCommandLocked("\\set_vfo VFOA") }
             }
             configured && restored
         }

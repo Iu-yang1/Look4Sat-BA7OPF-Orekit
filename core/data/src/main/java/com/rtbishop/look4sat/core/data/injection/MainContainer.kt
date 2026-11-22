@@ -428,6 +428,6 @@ class MainContainer(
         val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val appPreferences = com.rtbishop.look4sat.core.data.maintenance.SnapshotPreferences(rawPreferences)
         val appVersionName = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "4.0.4"
-        return SettingsRepo(manager, appPreferences, appVersionName)
+        return SettingsRepo(manager, appPreferences, appVersionName, context)
     }
 }

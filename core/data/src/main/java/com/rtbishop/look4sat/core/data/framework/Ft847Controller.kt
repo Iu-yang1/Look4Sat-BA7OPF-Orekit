@@ -78,8 +78,13 @@ internal class Ft847Controller(
         return isConnected && write(selected + 0x07, byteArrayOf(code.toByte())) && readVfo(selected)?.second == mode
     }
 
-    override suspend fun setCtcssMode(enabled: Boolean): Boolean = !enabled
-    override suspend fun setCtcssTone(toneHz: Double): Boolean = false
+    override suspend fun setCtcssMode(enabled: Boolean): Boolean =
+        isConnected && write(selected + 0x0A, byteArrayOf(if (enabled) 0x4A else 0x8A.toByte()))
+
+    override suspend fun setCtcssTone(toneHz: Double): Boolean {
+        val code = tones[toneHz] ?: return false
+        return isConnected && write(selected + 0x0B, byteArrayOf(code.toByte()))
+    }
     override suspend fun readPttState(): Boolean? = read(0xF7, 1)?.let { (it[0].toInt() and 0x80) == 0 }
     override suspend fun pttOn(): Boolean = isConnected && write(0x08) && readPttState() == true
     override suspend fun pttOff(): Boolean = isConnected && write(0x88) && readPttState() == false
@@ -121,5 +126,14 @@ internal class Ft847Controller(
     private companion object {
         val modes = mapOf(0x00 to "LSB", 0x01 to "USB", 0x02 to "CW", 0x03 to "CW-R",
             0x04 to "AM", 0x08 to "FM", 0x88 to "NFM")
+        val tones = mapOf(
+            67.0 to 0x3F, 69.3 to 0x39, 71.9 to 0x1F, 74.4 to 0x3E, 77.0 to 0x0F, 79.7 to 0x3D,
+            82.5 to 0x1E, 85.4 to 0x3C, 88.5 to 0x0E, 91.5 to 0x3B, 94.8 to 0x1D, 97.4 to 0x3A,
+            100.0 to 0x0D, 103.5 to 0x1C, 107.2 to 0x0C, 110.9 to 0x1B, 114.8 to 0x0B, 118.8 to 0x1A,
+            123.0 to 0x0A, 127.3 to 0x19, 131.8 to 0x09, 136.5 to 0x18, 141.3 to 0x08, 146.2 to 0x17,
+            151.4 to 0x07, 156.7 to 0x16, 162.2 to 0x06, 167.9 to 0x15, 173.8 to 0x05, 179.9 to 0x14,
+            186.2 to 0x04, 192.8 to 0x13, 203.5 to 0x03, 210.7 to 0x12, 218.1 to 0x02, 225.7 to 0x11,
+            233.6 to 0x01, 241.8 to 0x10, 250.3 to 0x00
+        )
     }
 }

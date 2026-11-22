@@ -175,8 +175,14 @@ data class RadioRxEndpoint(
     val transport: String,
     val baudRate: Int,
     val civAddress: Int?,
-    val tcpProtocol: String
+    val tcpProtocol: String,
+    val allowFrequencyWrites: Boolean = true,
+    val lanLogin: RadioLanLogin? = null
 )
+
+data class RadioLanLogin(val username: String, val password: String, val administrator: Boolean = false) {
+    override fun toString(): String = "RadioLanLogin(redacted)"
+}
 
 data class RadioControlSettings(
     val enabled: Boolean,
@@ -218,7 +224,8 @@ data class RadioControlSettings(
     val ptt: RadioPttSettings = RadioPttSettings(
         method = if (catTransport == TRANSPORT_VOX) RadioPttMethod.VOX else RadioPttMethod.CAT
     ),
-    val rxEndpoint: RadioRxEndpoint? = null
+    val rxEndpoint: RadioRxEndpoint? = null,
+    val lanLogin: RadioLanLogin? = null
 ) {
     val pttMethod: RadioPttMethod
         get() = if (catTransport == TRANSPORT_VOX && ptt.method == RadioPttMethod.CAT) RadioPttMethod.VOX else ptt.method
@@ -226,7 +233,7 @@ data class RadioControlSettings(
     fun forRxEndpoint(): RadioControlSettings {
         val rx = rxEndpoint ?: return this
         return copy(radioModel = rx.model, catTransport = rx.transport, baudRate = rx.baudRate,
-            civAddress = rx.civAddress, tcpProtocol = rx.tcpProtocol, splitMode = false,
+            civAddress = rx.civAddress, tcpProtocol = rx.tcpProtocol, splitMode = false, lanLogin = rx.lanLogin,
             radioAudio = com.rtbishop.look4sat.core.domain.audio.RadioAudioSettings(),
             catRts = false, catDtr = false,
             usbFlowControl = com.rtbishop.look4sat.core.domain.control.SerialUsbFlow.NONE)
@@ -253,6 +260,16 @@ data class RadioControlSettings(
         const val MODEL_QUANSHENG_UVK1 = "Quansheng UV-K1 (L4S)"
         const val MODEL_QUANSHENG_UVK5V3 = "Quansheng UV-K5 V3 (L4S)"
         const val MODEL_VERO_N76 = "Vero VR-N76"
+        const val MODEL_SDR_RIGCTLD = "SDR (rigctld)"
+        const val MODEL_KENWOOD_TH_D74 = "Kenwood TH-D74"
+        const val MODEL_KENWOOD_TH_D75 = "Kenwood TH-D75"
+        const val MODEL_KENWOOD_TS_2000 = "Kenwood TS-2000"
+        const val MODEL_KENWOOD_TS_790 = "Kenwood TS-790A/E"
+        const val MODEL_KENWOOD_TS_990 = "Kenwood TS-990S"
+        const val MODEL_KENWOOD_TS_890 = "Kenwood TS-890S"
+        const val MODEL_KENWOOD_TS_590 = "Kenwood TS-590S"
+        const val MODEL_KENWOOD_TS_590SG = "Kenwood TS-590SG"
+        const val MODEL_FLEX_SMARTSDR = "FlexRadio SmartSDR"
         const val TRANSPORT_BLUETOOTH = "BLUETOOTH"
         const val TRANSPORT_USB = "USB"
         const val TRANSPORT_TCP = "TCP"
@@ -260,12 +277,16 @@ data class RadioControlSettings(
         const val TRANSPORT_VOX = "VOX"
         const val TCP_PROTOCOL_RAW_CAT = "RAW_CAT"
         const val TCP_PROTOCOL_HAMLIB = "HAMLIB_RIGCTLD"
+        const val TCP_PROTOCOL_KENWOOD_LAN = "KENWOOD_LAN"
         const val DUPLEX_MODE_SPLIT = "SPLIT"
         const val DUPLEX_MODE_SATELLITE = "SATELLITE"
 
         val SUPPORTED_RADIOS = RadioModelCatalog.supportedModels
         val SUPPORTED_TRANSPORTS = listOf(TRANSPORT_BLUETOOTH, TRANSPORT_USB, TRANSPORT_TCP, TRANSPORT_VOX)
         val SUPPORTED_TCP_PROTOCOLS = listOf(TCP_PROTOCOL_RAW_CAT, TCP_PROTOCOL_HAMLIB)
+        fun tcpProtocolsFor(model: String): List<String> =
+            if (model == MODEL_KENWOOD_TS_990 || model == MODEL_KENWOOD_TS_890)
+                SUPPORTED_TCP_PROTOCOLS + TCP_PROTOCOL_KENWOOD_LAN else SUPPORTED_TCP_PROTOCOLS
 
     }
 }

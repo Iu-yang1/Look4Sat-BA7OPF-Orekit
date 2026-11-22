@@ -113,6 +113,7 @@ import com.rtbishop.look4sat.core.domain.model.RadioPttLine
 import com.rtbishop.look4sat.core.domain.model.RadioPttMethod
 import com.rtbishop.look4sat.core.domain.model.RadioPttSettings
 import com.rtbishop.look4sat.core.domain.model.RadioRxEndpoint
+import com.rtbishop.look4sat.core.domain.model.RadioLanLogin
 import com.rtbishop.look4sat.core.domain.model.RadioProtocolFamily
 import com.rtbishop.look4sat.core.domain.model.radioModelDescriptor
 import com.rtbishop.look4sat.core.domain.model.parseRadioTcpEndpoint
@@ -1282,8 +1283,11 @@ fun RadioControlDialog(
     var rxTcpProtocol by rememberSaveable {
         mutableStateOf(initialSettings.rxEndpoint?.tcpProtocol ?: initialSettings.tcpProtocol)
     }
+    var rxAllowTuning by rememberSaveable { mutableStateOf(initialSettings.rxEndpoint?.allowFrequencyWrites ?: true) }
     val effectiveRxTransport = if (separateRx) rxTransport else catTransport.value
     val tcpProtocol = rememberSaveable { mutableStateOf(initialSettings.tcpProtocol) }
+    var txLanLogin by remember { mutableStateOf(initialSettings.lanLogin ?: RadioLanLogin("", "")) }
+    var rxLanLogin by remember { mutableStateOf(initialSettings.rxEndpoint?.lanLogin ?: RadioLanLogin("", "")) }
     val txAddress  = rememberSaveable { mutableStateOf(initialSettings.txRadioAddress) }
     val rxAddress  = rememberSaveable { mutableStateOf(initialSettings.rxRadioAddress) }
     val initialTxName = initialSettings.txRadioName.takeUnless {
@@ -1493,7 +1497,7 @@ fun RadioControlDialog(
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-    val isSingleRadio = splitMode.value || isL4s || isN76
+    val isSingleRadio = splitMode.value || isL4s || isN76 || radioModel.value == RadioControlSettings.MODEL_FLEX_SMARTSDR
     val requiredStopBits = modelDescriptor.serialStopBits
 
     val baudRates = radioBaudRates(radioModel.value)
@@ -1665,6 +1669,14 @@ fun RadioControlDialog(
         if (pttMethod == RadioPttMethod.VOX && voxRelease.toLongOrNull()?.let { it in 0L..2_000L } != true) {
             issues += context.getString(R.string.rc_config_timing)
         }
+        val txKenwoodLan = catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
+            tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN
+        val rxKenwoodLan = !isSingleRadio && separateRx && rxTransport == RadioControlSettings.TRANSPORT_TCP &&
+            rxTcpProtocol == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN
+        if (txKenwoodLan && !validKenwoodLogin(radioModel.value, txLanLogin) ||
+            rxKenwoodLan && !validKenwoodLogin(rxModel, rxLanLogin)) {
+            issues += context.getString(R.string.rc_kenwood_credentials_required)
+        }
         val draft = RadioControlSettings(
                 enabled        = enabled.value,
                 radioModel     = radioModel.value,
@@ -1701,8 +1713,12 @@ fun RadioControlDialog(
                 ptt = RadioPttSettings(pttMethod, pttUsbAddress, pttLine, pttActiveHigh,
                     voxRelease.toLongOrNull()?.coerceIn(0L, 2_000L) ?: 350L),
                 rxEndpoint = if (!isSingleRadio && separateRx) RadioRxEndpoint(
-                    rxModel, rxTransport, rxBaud, parseCivAddress(rxCiv), rxTcpProtocol
-                ) else null
+                    rxModel, rxTransport, rxBaud, parseCivAddress(rxCiv),
+                    if (rxModel == RadioControlSettings.MODEL_SDR_RIGCTLD) RadioControlSettings.TCP_PROTOCOL_HAMLIB else rxTcpProtocol,
+                    rxAllowTuning,
+                    rxLanLogin.takeIf { rxKenwoodLan && validKenwoodLogin(rxModel, it) }
+                ) else null,
+                lanLogin = txLanLogin.takeIf { txKenwoodLan && validKenwoodLogin(radioModel.value, it) }
             )
         if (issues.isEmpty()) {
             onSave(draft)
@@ -1851,18 +1867,14 @@ fun RadioControlDialog(
             if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
                 Text(stringResource(R.string.rc_tcp_protocol), fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    RadioControlSettings.SUPPORTED_TCP_PROTOCOLS.forEach { protocol ->
+                    RadioControlSettings.tcpProtocolsFor(radioModel.value).forEach { protocol ->
                         FilterChip(
                             selected = tcpProtocol.value == protocol,
                             onClick = { tcpProtocol.value = protocol },
                             label = {
                                 Text(
                                     stringResource(
-                                        if (protocol == RadioControlSettings.TCP_PROTOCOL_HAMLIB) {
-                                            R.string.rc_tcp_protocol_hamlib
-                                        } else {
-                                            R.string.rc_tcp_protocol_raw
-                                        }
+                                        tcpProtocolLabel(protocol)
                                     ),
                                     fontSize = 12.sp
                                 )
@@ -1871,6 +1883,10 @@ fun RadioControlDialog(
                         )
                     }
                 }
+            }
+            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
+                tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) {
+                KenwoodLanFields(radioModel.value, txLanLogin) { txLanLogin = it }
             }
             if (!isVox) {
             Spacer(modifier = Modifier.height(6.dp))
@@ -2113,7 +2129,7 @@ fun RadioControlDialog(
                                     rxAddress.value = ""
                                     rxName.value = ""
                                     selectingFor.value = ""
-                                    val models = com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(transport)
+                                    val models = com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(transport, receive = true)
                                     if (rxModel !in models) {
                                         rxModel = models.first()
                                         rxBaud = radioBaudRates(rxModel).first()
@@ -2124,29 +2140,38 @@ fun RadioControlDialog(
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(rxTransport)
+                        com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(rxTransport, receive = true)
                             .filter { it != RadioControlSettings.MODEL_VERO_N76 && it != RadioControlSettings.MODEL_QUANSHENG_UVK1 &&
-                                it != RadioControlSettings.MODEL_QUANSHENG_UVK5V3 }
+                                it != RadioControlSettings.MODEL_QUANSHENG_UVK5V3 && it != RadioControlSettings.MODEL_FLEX_SMARTSDR }
                             .forEach { model ->
                                 FilterChip(selected = rxModel == model, onClick = {
                                     rxModel = model
+                                    if (rxTcpProtocol !in RadioControlSettings.tcpProtocolsFor(model)) {
+                                        rxTcpProtocol = RadioControlSettings.TCP_PROTOCOL_RAW_CAT
+                                    }
                                     rxBaud = radioBaudRates(model).first()
                                     rxCiv = defaultCivAddress(model)?.let { "0x%02X".format(it) }.orEmpty()
                                     selectingFor.value = ""
                                 }, label = { Text(model) })
                             }
                     }
-                    if (rxTransport == RadioControlSettings.TRANSPORT_TCP) {
+                    if (rxModel == RadioControlSettings.MODEL_SDR_RIGCTLD) {
+                        FilterChip(selected = !rxAllowTuning, onClick = { rxAllowTuning = !rxAllowTuning },
+                            label = { Text(stringResource(R.string.rc_sdr_read_only)) })
+                    } else if (rxTransport == RadioControlSettings.TRANSPORT_TCP) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            RadioControlSettings.SUPPORTED_TCP_PROTOCOLS.forEach { protocol ->
+                            RadioControlSettings.tcpProtocolsFor(rxModel).forEach { protocol ->
                                 FilterChip(selected = rxTcpProtocol == protocol, onClick = { rxTcpProtocol = protocol },
-                                    label = { Text(stringResource(if (protocol == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-                                        R.string.rc_tcp_protocol_hamlib else R.string.rc_tcp_protocol_raw)) })
+                                    label = { Text(stringResource(tcpProtocolLabel(protocol))) })
                             }
                         }
+                        if (rxTcpProtocol == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) {
+                            KenwoodLanFields(rxModel, rxLanLogin) { rxLanLogin = it }
+                        }
                     }
-                    if (rxTransport != RadioControlSettings.TRANSPORT_TCP ||
-                        rxTcpProtocol != RadioControlSettings.TCP_PROTOCOL_HAMLIB) {
+                    if (rxModel != RadioControlSettings.MODEL_SDR_RIGCTLD &&
+                        (rxTransport != RadioControlSettings.TRANSPORT_TCP ||
+                        rxTcpProtocol != RadioControlSettings.TCP_PROTOCOL_HAMLIB)) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             radioBaudRates(rxModel).forEach { rate ->
                                 FilterChip(selected = rxBaud == rate, onClick = { rxBaud = rate },
@@ -2439,6 +2464,33 @@ internal data class UsbSerialUiPort(
     fun supportsLineConfiguration(interfaceCount: Int, stopBits: Int): Boolean {
         val restrictedCp2105Port = driverName == "CP210x" && interfaceCount == 2 && portIndex == 1
         return !restrictedCp2105Port || stopBits != 2
+    }
+}
+
+private fun tcpProtocolLabel(protocol: String): Int = when (protocol) {
+    RadioControlSettings.TCP_PROTOCOL_HAMLIB -> R.string.rc_tcp_protocol_hamlib
+    RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN -> R.string.rc_kenwood_lan
+    else -> R.string.rc_tcp_protocol_raw
+}
+
+private fun validKenwoodLogin(model: String, login: RadioLanLogin): Boolean {
+    val limit = if (model == RadioControlSettings.MODEL_KENWOOD_TS_990) 8 else 32
+    return listOf(login.username, login.password).all { value ->
+        value.length in 1..limit && value.all { it.code in 32..126 && it != ';' }
+    }
+}
+
+@Composable
+private fun KenwoodLanFields(model: String, login: RadioLanLogin, onChange: (RadioLanLogin) -> Unit) {
+    OutlinedTextField(value = login.username, onValueChange = { onChange(login.copy(username = it)) },
+        label = { Text(stringResource(R.string.rc_kenwood_username)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    OutlinedTextField(value = login.password, onValueChange = { onChange(login.copy(password = it)) },
+        label = { Text(stringResource(R.string.rc_kenwood_password)) }, singleLine = true,
+        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth())
+    if (model == RadioControlSettings.MODEL_KENWOOD_TS_890) {
+        FilterChip(selected = login.administrator, onClick = { onChange(login.copy(administrator = !login.administrator)) },
+            label = { Text(stringResource(R.string.rc_kenwood_admin)) })
     }
 }
 

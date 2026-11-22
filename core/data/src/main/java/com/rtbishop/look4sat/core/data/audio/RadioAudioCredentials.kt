@@ -36,7 +36,8 @@ internal class RadioAudioCredentials(context: Context) : RadioAudioSecretStore {
     fun save(identity: String, username: String, password: String) {
         synchronized(com.rtbishop.look4sat.core.data.maintenance.DataMaintenance.preferencesLock) {
             com.rtbishop.look4sat.core.data.maintenance.DataMaintenance.checkWritable()
-            IcomLanProtocol.credential(username); IcomLanProtocol.credential(password)
+            validateRadioCredential(identity, username)
+            validateRadioCredential(identity, password)
             val cipher=Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE,key()) }
             cipher.updateAAD(identity.toByteArray())
             val encrypted=cipher.doFinal("$username\n$password".toByteArray())
@@ -51,4 +52,10 @@ internal class RadioAudioCredentials(context: Context) : RadioAudioSecretStore {
         val fields=String(cipher.doFinal(bytes.copyOfRange(12,bytes.size))).split('\n',limit=2)
         return fields[0] to fields[1]
     }
+}
+
+internal fun validateRadioCredential(identity: String, value: String) {
+    if (identity.startsWith("kenwood-cat:")) {
+        require(value.length in 1..32 && value.all { it.code in 32..126 && it != ';' }) { "Invalid Kenwood LAN credential" }
+    } else IcomLanProtocol.credential(value).fill(0)
 }

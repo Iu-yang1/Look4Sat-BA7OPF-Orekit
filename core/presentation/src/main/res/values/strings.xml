@@ -1127,4 +1127,12 @@
     <string name="rc_ptt_vox_release">VOX release (ms)</string>
     <string name="rc_ptt_no_cat">No CAT</string>
     <string name="rc_independent_rx_cat">Separate RX CAT settings</string>
+    <string name="rc_sdr_read_only">Read-only receiver</string>
+    <string name="rc_kenwood_lan">Kenwood LAN</string>
+    <string name="rc_kenwood_username">Username</string>
+    <string name="rc_kenwood_password">Password</string>
+    <string name="rc_kenwood_admin">Administrator account</string>
+    <string name="rc_kenwood_credentials_required">Enter valid Kenwood LAN credentials</string>
+    <string name="rc_ptt_line_active">PTT line active</string>
+    <string name="rc_ptt_vox_active">VOX audio keying</string>
 </resources>

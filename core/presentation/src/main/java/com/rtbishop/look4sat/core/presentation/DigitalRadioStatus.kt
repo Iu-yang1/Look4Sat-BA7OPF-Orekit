@@ -245,7 +245,12 @@ private fun RadioControlStatus(radio: RadioTrackingState) {
                 fontSize = 11.sp
             )
             Text(
-                text = stringResource(R.string.ft4_ptt_status, radio.pttState.name),
+                text = when {
+                    radio.pttState == PttState.ON && radio.externalPtt != null -> stringResource(R.string.rc_ptt_line_active)
+                    radio.txLeaseId != null && radio.externalPtt == com.rtbishop.look4sat.core.domain.model.RadioPttMethod.VOX ->
+                        stringResource(R.string.rc_ptt_vox_active)
+                    else -> stringResource(R.string.ft4_ptt_status, radio.pttState.name)
+                },
                 color = when (radio.pttState) {
                     PttState.OFF -> MaterialTheme.colorScheme.onSurfaceVariant
                     PttState.ARMING -> MaterialTheme.colorScheme.primary

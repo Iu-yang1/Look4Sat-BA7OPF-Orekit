@@ -22,7 +22,7 @@ class L4sSimulatorTest {
         assumeTrue("Set L4S_SIMULATOR_PORT to a running hardware-free C-core simulator",port!=null)
         val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
         val diagnostics=com.rtbishop.look4sat.core.domain.control.ControlDiagnosticsBuffer()
-        val radio=L4sController(SocketTransport(checkNotNull(port)),scope,diagnostics=diagnostics)
+        val radio=L4sController(SocketTransport(checkNotNull(port)),scope,diagnostics=diagnostics,tuningStepHz={250L})
         try {
             assertTrue(radio.connect())
             assertTrue(radio.remoteState.value.capabilities!!.satelliteProfiles)

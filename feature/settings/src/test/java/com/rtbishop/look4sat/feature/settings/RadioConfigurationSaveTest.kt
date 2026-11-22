@@ -48,7 +48,7 @@ class RadioConfigurationSaveTest {
             catTransport = "USB", splitMode = true))
         compose.onNodeWithText("Single-radio control").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Preset the radio’s TX/RX mode on the radio. Software does not enable split or satellite mode.")
-            .assertIsDisplayed()
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Satellite profiles").assertDoesNotExist()
     }
 }

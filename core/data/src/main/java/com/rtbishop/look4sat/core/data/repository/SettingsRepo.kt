@@ -61,8 +61,24 @@ internal fun parsePassModesFromPreferences(raw: String?): List<String> =
 class SettingsRepo(
     private val locationManager: LocationManager,
     private val preferences: SharedPreferences,
-    override val appVersionName: String
+    override val appVersionName: String,
+    private val appContext: android.content.Context? = null
 ) : ISettingsRepo {
+    private fun readKenwoodLogin(model: String, address: String, administrator: Boolean):
+        com.rtbishop.look4sat.core.domain.model.RadioLanLogin? = appContext?.let { context ->
+            runCatching {
+                com.rtbishop.look4sat.core.data.audio.RadioAudioCredentials(context).read("kenwood-cat:$model:$address")
+                    ?.let { (username, password) ->
+                        com.rtbishop.look4sat.core.domain.model.RadioLanLogin(username, password, administrator)
+                    }
+            }.getOrNull()
+        }
+
+    private fun saveKenwoodLogin(model: String, address: String, login: com.rtbishop.look4sat.core.domain.model.RadioLanLogin?) {
+        if (login == null || appContext == null) return
+        com.rtbishop.look4sat.core.data.audio.RadioAudioCredentials(appContext)
+            .save("kenwood-cat:$model:$address", login.username, login.password)
+    }
 
     internal fun reloadAfterRestore() {
         _satelliteSelection.value = getSelectedIds()
@@ -1487,6 +1503,15 @@ class SettingsRepo(
             l4sCorrectionEditStepHz = settings.l4sCorrectionEditStepHz.coerceIn(10,1000)/10*10,
             n76Options = settings.n76Options.normalized()
         )
+        if (normalized.catTransport == RadioControlSettings.TRANSPORT_TCP &&
+            normalized.tcpProtocol == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) {
+            saveKenwoodLogin(normalized.radioModel, normalized.txRadioAddress, normalized.lanLogin)
+        }
+        val receiver = normalized.rxEndpoint
+        if (receiver?.transport == RadioControlSettings.TRANSPORT_TCP &&
+            receiver.tcpProtocol == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) {
+            saveKenwoodLogin(receiver.model, normalized.rxRadioAddress, receiver.lanLogin)
+        }
         preferences.edit {
             putBoolean(keyRadioControlEnabled, normalized.enabled)
             putString(keyRadioModel, normalized.radioModel)
@@ -1511,12 +1536,15 @@ class SettingsRepo(
                 putInt("radioRxEndpointBaud", rx.baudRate)
                 putInt("radioRxEndpointCivAddress", rx.civAddress ?: -1)
                 putString("radioRxEndpointTcpProtocol", rx.tcpProtocol)
+                putBoolean("radioRxEndpointAllowTuning", rx.allowFrequencyWrites)
+                putBoolean("radioKenwoodRxAdmin", rx.lanLogin?.administrator == true)
             }
             putBoolean(keyRadioSplitMode, normalized.splitMode)
             putString(keyRadioCatTransport, normalized.catTransport)
             putString(keyRadioDuplexMode, normalized.duplexMode)
             putInt(keyRadioCivAddress, normalized.civAddress ?: -1)
             putString(keyRadioTcpProtocol, normalized.tcpProtocol)
+            putBoolean("radioKenwoodTxAdmin", normalized.lanLogin?.administrator == true)
             putLong(keyRadioDialSettle, normalized.dialSettleMillis)
             putLong(keyRadioLinearDeadband, normalized.linearDialDeadbandHz)
             putLong(keyRadioFmDeadband, normalized.fmDialDeadbandHz)
@@ -1572,7 +1600,7 @@ class SettingsRepo(
                 ?: RadioControlSettings.DUPLEX_MODE_SPLIT,
             civAddress = preferences.getInt(keyRadioCivAddress, -1).takeIf { it in 0..0xFF },
             tcpProtocol = preferences.getString(keyRadioTcpProtocol, null)
-                ?.takeIf { it in RadioControlSettings.SUPPORTED_TCP_PROTOCOLS }
+                ?.takeIf { it in RadioControlSettings.tcpProtocolsFor(model) }
                 ?: RadioControlSettings.TCP_PROTOCOL_RAW_CAT,
             dialSettleMillis = preferences.getLong(keyRadioDialSettle, 1_500L).coerceIn(0L, 10_000L),
             linearDialDeadbandHz = preferences.getLong(keyRadioLinearDeadband, 20L).coerceIn(1L, 10_000L),
@@ -1595,7 +1623,7 @@ class SettingsRepo(
                 voxReleaseMillis = preferences.getLong("radioVoxReleaseMillis", 350L).coerceIn(0, 2_000)
             ),
             rxEndpoint = preferences.getString("radioRxEndpointModel", null)
-                ?.takeIf { it in RadioControlSettings.SUPPORTED_RADIOS }
+                ?.takeIf { it in RadioControlSettings.SUPPORTED_RADIOS || it == RadioControlSettings.MODEL_SDR_RIGCTLD }
                 ?.let { rxModel ->
                     val baudRates = com.rtbishop.look4sat.core.domain.model.supportedRadioBaudRates(rxModel)
                     com.rtbishop.look4sat.core.domain.model.RadioRxEndpoint(
@@ -1607,10 +1635,21 @@ class SettingsRepo(
                             .takeIf { it in baudRates } ?: baudRates.first(),
                         civAddress = preferences.getInt("radioRxEndpointCivAddress", -1).takeIf { it in 0..0xFF },
                         tcpProtocol = preferences.getString("radioRxEndpointTcpProtocol", null)
-                            ?.takeIf { it in RadioControlSettings.SUPPORTED_TCP_PROTOCOLS }
-                            ?: RadioControlSettings.TCP_PROTOCOL_RAW_CAT
+                            ?.takeIf { it in RadioControlSettings.tcpProtocolsFor(rxModel) }
+                            ?: RadioControlSettings.TCP_PROTOCOL_RAW_CAT,
+                        allowFrequencyWrites = preferences.getBoolean("radioRxEndpointAllowTuning", true),
+                        lanLogin = if (preferences.getString("radioRxEndpointTcpProtocol", null) ==
+                            RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) readKenwoodLogin(
+                            rxModel, preferences.getString(keyRxRadioAddress, "").orEmpty(),
+                            preferences.getBoolean("radioKenwoodRxAdmin", false)
+                        ) else null
                     )
-                }
+                },
+            lanLogin = if (preferences.getString(keyRadioTcpProtocol, null) ==
+                RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) readKenwoodLogin(
+                model, preferences.getString(keyTxRadioAddress, "").orEmpty(),
+                preferences.getBoolean("radioKenwoodTxAdmin", false)
+            ) else null
         )
     }
     //endregion

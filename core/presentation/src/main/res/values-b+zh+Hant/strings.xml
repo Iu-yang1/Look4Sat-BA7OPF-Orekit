@@ -1028,4 +1028,12 @@
     <string name="rc_ptt_vox_release">VOX 釋放等待（毫秒）</string>
     <string name="rc_ptt_no_cat">無 CAT</string>
     <string name="rc_independent_rx_cat">單獨設定 RX CAT</string>
+    <string name="rc_sdr_read_only">唯讀接收機狀態</string>
+    <string name="rc_kenwood_lan">Kenwood 區域網路</string>
+    <string name="rc_kenwood_username">使用者名稱</string>
+    <string name="rc_kenwood_password">密碼</string>
+    <string name="rc_kenwood_admin">管理員帳號</string>
+    <string name="rc_kenwood_credentials_required">請輸入有效的 Kenwood 區域網路憑證</string>
+    <string name="rc_ptt_line_active">PTT 控制線已啟用</string>
+    <string name="rc_ptt_vox_active">VOX 音訊鍵控</string>
 </resources>

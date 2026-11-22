@@ -384,6 +384,46 @@ class Ic705Controller(
 
     override val supportsAtomicPair: Boolean get() = variant == IcomCivVariant.IC820
 
+    override suspend fun readTrackingFrequencies(): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? =
+        withContext(Dispatchers.IO) {
+            if (variant != IcomCivVariant.IC820) return@withContext null
+            ioMutex.withLock { readIc820PairLocked() }
+        }
+
+    private suspend fun readIc820PairLocked(): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? {
+        val previousRx = ic820LastRxHz ?: return null
+        val previousTx = ic820LastTxHz ?: return null
+        val budget = currentCoroutineContext()[Ft4CatBudget]
+        val minimum = if (ic820FastSubAccess) 400L else 850L
+        if (budget != null && budget.remainingMillis() < minimum) return null
+
+        ic820PairReady = false
+        val main = IcomCivProtocol.buildIc820BandAccessCommand(main = true)
+        val rx = if (ic820FastSubAccess) {
+            val sub = IcomCivProtocol.buildIc820BandAccessCommand(main = false)
+            val subSelected = sendAndWaitAck(sub)
+            var restored = false
+            val observed = try {
+                if (subSelected) readFrequencyLocked() else null
+            } finally {
+                restored = withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(main) }
+            }
+            observed.takeIf { restored }
+        } else {
+            val (restored, observed) = ic820WithSubAsMainLocked { readFrequencyLocked() }
+            observed.takeIf { restored }
+        }
+        val tx = if (rx != null) readFrequencyLocked() else null
+        if (rx == null || tx == null || ic820Band(rx) != ic820Band(previousRx) ||
+            ic820Band(tx) != ic820Band(previousTx)) return null
+        ic820LastRxHz = rx
+        ic820LastTxHz = tx
+        ic820FastCycles = 0
+        ic820LastAuditNanos = System.nanoTime()
+        ic820PairReady = true
+        return com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(rx, tx)
+    }
+
     /**
      * Physical MAIN can be either VHF or UHF on the IC-820. In SATL operation
      * MAIN transmits and SUB receives, so do not assign modes until MAIN is on
@@ -436,7 +476,7 @@ class Ic705Controller(
                         "swapped=true originalMain=$originalMain alignedMain=$alignedMain txBand=$txBand rxBand=$rxBand")
                     return@withLock true
                 }
-                val restored = withContext(NonCancellable) {
+                val restored = withContext(NonCancellable + Ft4CatBudget.cleanup) {
                     val undo = sendAndWaitAck(swap)
                     undo && sendAndWaitAck(main)
                 }
@@ -461,7 +501,7 @@ class Ic705Controller(
         try {
             if (entered) frequency = readFrequencyLocked()
         } finally {
-            mainRestored = withContext(NonCancellable) { sendAndWaitAck(main) }
+            mainRestored = withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(main) }
         }
         if (!mainRestored) {
             diagnose("band-align/sub-access", "Unable to restore MAIN after SUB probe",
@@ -501,7 +541,7 @@ class Ic705Controller(
             try {
                 if (subSelected) actualRx = readFrequencyLocked()
             } finally {
-                mainRestored = withContext(NonCancellable) { sendAndWaitAck(main) }
+                mainRestored = withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(main) }
             }
             if (mainRestored) actualTx = readFrequencyLocked()
             if (!subSelected || !mainRestored || actualRx != ic820LastRxHz ||
@@ -547,11 +587,14 @@ class Ic705Controller(
             }
         } finally {
             if (swapped) {
-                if (withContext(NonCancellable) { sendAndWaitAck(exchange) }) swapped = false
-                else if (failed == null) failed = "fast-restore-band-exchange"
+                if (withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(exchange) }) swapped = false
+                else {
+                    if (failed == null) failed = "fast-restore-band-exchange"
+                    dropLegacyConnection("Could not restore IC-820 MAIN/SUB roles")
+                }
             }
             // D0 and B0 both require MAIN access restoration before TX.
-            if (updateRx && !withContext(NonCancellable) { sendAndWaitAck(main) } && failed == null) {
+            if (updateRx && !withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(main) } && failed == null) {
                 failed = "fast-restore-main-access"
             }
         }
@@ -599,10 +642,12 @@ class Ic705Controller(
             ioMutex.withLock {
                 val budget = currentCoroutineContext()[Ft4CatBudget]
                 if (budget != null) {
+                    if (!ic820PairReady ||
+                        ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES && !ic820FastSubAccess) {
+                        readIc820PairLocked()
+                        return@withLock FrequencyPairResult.HELD
+                    }
                     val minimum = when {
-                        !ic820PairReady -> return@withLock FrequencyPairResult.HELD
-                        ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES && !ic820FastSubAccess ->
-                            return@withLock FrequencyPairResult.HELD
                         ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES ||
                             ic820FastSubAccess && System.nanoTime() - ic820LastAuditNanos >= IC820_AUDIT_INTERVAL_NANOS -> 1_150L
                         ic820FastSubAccess -> 550L
@@ -652,7 +697,7 @@ class Ic705Controller(
                                     diagnose("band-align/corrected",
                                         "initialMain=$originalMain alignedMain=$alignedMain targetTx=$txHz targetRx=$rxHz")
                                 } else {
-                                    val undone = withContext(NonCancellable) {
+                                    val undone = withContext(NonCancellable + Ft4CatBudget.cleanup) {
                                         sendAndWaitAck(exchange) && sendAndWaitAck(mainAccess)
                                     }
                                     diagnose("band-align/failed",
@@ -680,7 +725,7 @@ class Ic705Controller(
 
                     // Restore TX MAIN position before writing the desired uplink.
                     if (swapped) {
-                        val restored = withContext(NonCancellable) { sendAndWaitAck(exchange) }
+                        val restored = withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(exchange) }
                         if (restored) swapped = false
                         else if (failedStage == null) failedStage = "restore-main-sub-after-rx"
                     }
@@ -711,11 +756,11 @@ class Ic705Controller(
                     }
                 } finally {
                     if (swapped) {
-                        val restored = withContext(NonCancellable) { sendAndWaitAck(exchange) }
+                        val restored = withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(exchange) }
                         if (restored) swapped = false
                         else if (failedStage == null) failedStage = "restore-main-sub-after-verify"
                     }
-                    val mainRestored = withContext(NonCancellable) {
+                    val mainRestored = withContext(NonCancellable + Ft4CatBudget.cleanup) {
                         sendAndWaitAck(mainAccess)
                     }
                     if (!mainRestored && failedStage == null) failedStage = "restore-main-access"
@@ -931,7 +976,7 @@ class Ic705Controller(
                 val frequency = try {
                     if (sendAndWaitAck(sub)) readFrequencyLocked() else null
                 } finally {
-                    restored = withContext(NonCancellable) { sendAndWaitAck(main) }
+                    restored = withContext(NonCancellable + Ft4CatBudget.cleanup) { sendAndWaitAck(main) }
                 }
                 ic820PairReady = readyBeforeRead && restored && frequency == ic820LastRxHz
                 return@withLock frequency?.takeIf { restored }
@@ -1265,10 +1310,11 @@ class Ic705Controller(
                 performed = true
             }
         } finally {
-            restored = withContext(NonCancellable) {
+            restored = withContext(NonCancellable + Ft4CatBudget.cleanup) {
                 val swappedBack = sendAndWaitAck(swap)
-                val mainSelected = sendAndWaitAck(main)
-                swappedBack && mainSelected
+                val mainSelected = swappedBack && sendAndWaitAck(main)
+                if (!mainSelected) dropLegacyConnection("Could not restore IC-820 MAIN/SUB roles")
+                mainSelected
             }
         }
         return (performed && restored) to value
@@ -1303,10 +1349,16 @@ class Ic705Controller(
                 if (successful && rxMode != null) successful = if (variant == IcomCivVariant.IC910)
                     setIc910ModeLocked(rxMode) else sendAndWaitAck(checkNotNull(rxCommand))
                 if (successful && rxMode != null && variant != IcomCivVariant.IC910) successful = readModeLocked() == normalizedMode(rxMode)
+                if (successful && rxMode != null && variant == IcomCivVariant.IC9100) {
+                    successful = setAndReadLegacyDataModeLocked(IcomCivProtocol.isDataMode(rxMode))
+                }
                 if (successful) successful = sendAndWaitAck(selectVfoCommand(vfoA = false))
                 if (successful && txMode != null) successful = if (variant == IcomCivVariant.IC910)
                     setIc910ModeLocked(txMode) else sendAndWaitAck(checkNotNull(txCommand))
                 if (successful && txMode != null && variant != IcomCivVariant.IC910) successful = readModeLocked() == normalizedMode(txMode)
+                if (successful && txMode != null && variant == IcomCivVariant.IC9100) {
+                    successful = setAndReadLegacyDataModeLocked(IcomCivProtocol.isDataMode(txMode))
+                }
                 successful
             } finally {
                 rxRestored = restoreRxVfo()
@@ -1315,7 +1367,7 @@ class Ic705Controller(
         }
     }
 
-    private suspend fun restoreRxVfo(): Boolean = withContext(NonCancellable) {
+    private suspend fun restoreRxVfo(): Boolean = withContext(NonCancellable + Ft4CatBudget.cleanup) {
         sendAndWaitAck(selectVfoCommand(vfoA = true))
     }
 

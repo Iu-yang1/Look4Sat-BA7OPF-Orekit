@@ -619,6 +619,12 @@ class Ic705ControllerTest {
             radio.setTrackingFrequencies(435_100_080L, 145_900_080L))
         assertEquals(listOf("07:B0", "07:D1", "05:80:00:10:35:04",
             "07:B0", "07:D1", "05:80:00:90:45:01"), transport.payloads)
+        transport.payloads.clear()
+        val pair = checkNotNull(radio.readTrackingFrequencies())
+        assertEquals(435_100_080L, pair.rxHz)
+        assertEquals(145_900_080L, pair.txHz)
+        assertEquals(listOf("07:D1", "07:B0", "07:D1", "03", "07:B0", "07:D1", "03"),
+            transport.payloads)
         radio.disconnect()
     }
 

@@ -201,15 +201,19 @@ class SerialRadioController(
         budget?.checkBeforeCommand()
         return actor.execute(delegate.commandTimeoutMillis) {
             budget?.checkBeforeCommand()
-            if (budget == null) operation() else withContext(budget) { operation() }
+            if (budget == null) operation() else withContext(budget) {
+                operation().also { budget.checkBeforeCommand() }
+            }
         }
     }
     override val remoteState get() = delegate.remoteState
     override val supportsAtomicPair get() = delegate.supportsAtomicPair
+    override val supportsFrequencyControl get() = delegate.supportsFrequencyControl
     override suspend fun prepareSatelliteBands(rxHz: Long, txHz: Long) =
         execute { delegate.prepareSatelliteBands(rxHz, txHz) }
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?) =
         execute { delegate.setTrackingFrequencies(rxHz, txHz) }
+    override suspend fun readTrackingFrequencies() = execute { delegate.readTrackingFrequencies() }
     override suspend fun startCw(text: String, wpm: Int) =
         actor.executePttOn { delegate.startCw(text, wpm) }
     override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay) =
@@ -238,6 +242,10 @@ class SerialRadioController(
         execute { delegate.setDataMode(enabled, baseMode) }
     override suspend fun setTxDataMode(enabled: Boolean, baseMode: String) =
         execute { delegate.setTxDataMode(enabled, baseMode) }
+    override suspend fun captureAudioState(split: Boolean) = execute { delegate.captureAudioState(split) }
+    override suspend fun setAudioInput(wlan: Boolean) = execute { delegate.setAudioInput(wlan) }
+    override suspend fun restoreAudioState(snapshot: com.rtbishop.look4sat.core.domain.repository.RadioTransmitAudioSnapshot) =
+        execute { delegate.restoreAudioState(snapshot) }
     override suspend fun setCtcssMode(enabled: Boolean) = execute { delegate.setCtcssMode(enabled) }
     override suspend fun setCtcssTone(toneHz: Double) = execute { delegate.setCtcssTone(toneHz) }
     override suspend fun readFrequencyAndMode() = execute(operation = delegate::readFrequencyAndMode)

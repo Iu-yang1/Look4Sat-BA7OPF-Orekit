@@ -196,8 +196,8 @@ internal class BackupSnapshotStore(
         snapshot.lotw.values.forEach { Base64.decode(it, Base64.NO_WRAP).fill(0) }
         snapshot.audio.forEach { (identity, credentials) ->
             require(identity.isNotBlank())
-            com.rtbishop.look4sat.core.data.audio.IcomLanProtocol.credential(credentials.username)
-            com.rtbishop.look4sat.core.data.audio.IcomLanProtocol.credential(credentials.password)
+            com.rtbishop.look4sat.core.data.audio.validateRadioCredential(identity, credentials.username)
+            com.rtbishop.look4sat.core.data.audio.validateRadioCredential(identity, credentials.password)
         }
         snapshot.records.forEach { require(it.startUtcMillis >= 0 && it.theirCallsign.length <= 256) }
         snapshot.astronomyGeneration?.let { require(it.matches(Regex("generation-[a-f0-9-]+"))) }

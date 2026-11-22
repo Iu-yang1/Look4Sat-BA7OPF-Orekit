@@ -46,7 +46,16 @@ class RadioCapabilitiesTest {
                 RadioControlSettings.MODEL_ICOM_IC820,
                 RadioControlSettings.MODEL_QUANSHENG_UVK1,
                 RadioControlSettings.MODEL_QUANSHENG_UVK5V3,
-                RadioControlSettings.MODEL_VERO_N76
+                RadioControlSettings.MODEL_VERO_N76,
+                RadioControlSettings.MODEL_KENWOOD_TH_D74,
+                RadioControlSettings.MODEL_KENWOOD_TH_D75,
+                RadioControlSettings.MODEL_KENWOOD_TS_2000,
+                RadioControlSettings.MODEL_KENWOOD_TS_790,
+                RadioControlSettings.MODEL_KENWOOD_TS_990,
+                RadioControlSettings.MODEL_KENWOOD_TS_890,
+                RadioControlSettings.MODEL_KENWOOD_TS_590,
+                RadioControlSettings.MODEL_KENWOOD_TS_590SG,
+                RadioControlSettings.MODEL_FLEX_SMARTSDR
             ),
             RadioModelCatalog.supportedModels
         )

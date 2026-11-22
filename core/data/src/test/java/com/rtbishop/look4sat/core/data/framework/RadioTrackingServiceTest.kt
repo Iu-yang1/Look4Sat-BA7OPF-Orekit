@@ -1656,6 +1656,68 @@ class RadioTrackingServiceTest {
     }
 
     @Test
+    fun ic820CanKeepCatConnectedWhileVoxControlsTheDigitalLease() = runTest {
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_ICOM_IC820, splitMode = true)
+        val settings = fixture.settings.radioControlSettings
+        settings.value = settings.value.copy(ptt = com.rtbishop.look4sat.core.domain.model.RadioPttSettings(
+            method = com.rtbishop.look4sat.core.domain.model.RadioPttMethod.VOX))
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        val lease = fixture.service.beginTransmit(fixture.request(50L))
+        fixture.service.confirmTransmitReady(lease)
+        assertTrue(lease.usesVox)
+        assertTrue(lease.effectiveTxFrequencyHz > 0)
+        assertTrue(fixture.service.isTransmitLeaseValid(lease))
+        fixture.service.endTransmit(lease)
+        assertFalse(fixture.service.isTransmitLeaseValid(lease))
+        assertTrue(tx.isConnected)
+        assertFalse(tx.operations.any { it.startsWith("ptt:") })
+        fixture.close()
+    }
+
+    @Test
+    fun ic820SeparateUsbPttUsesExternalLineAndReportsFailedRelease() = runTest {
+        val tx = FakeRadioController()
+        val switched = mutableListOf<Boolean>()
+        val line = object : RadioTransport {
+            override var isConnected = false
+            override suspend fun connect(): Boolean { isConnected = true; return true }
+            override suspend fun disconnect() { isConnected = false }
+            override suspend fun write(bytes: ByteArray): Boolean = error("PTT port must not send CAT")
+            override suspend fun readAvailable(maxBytes: Int): ByteArray = error("PTT port must not read CAT")
+            override fun reserveUsbPtt(line: com.rtbishop.look4sat.core.domain.model.RadioPttLine, activeHigh: Boolean) =
+                line == com.rtbishop.look4sat.core.domain.model.RadioPttLine.DTR && !activeHigh
+            override suspend fun setUsbPtt(active: Boolean): Boolean {
+                switched += active
+                return active
+            }
+        }
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_ICOM_IC820, splitMode = true,
+            transportFactory = { _, _, _, _ -> line })
+        val settings = fixture.settings.radioControlSettings
+        settings.value = settings.value.copy(ptt = com.rtbishop.look4sat.core.domain.model.RadioPttSettings(
+            method = com.rtbishop.look4sat.core.domain.model.RadioPttMethod.USB_SEPARATE,
+            usbAddress = "10:0:1",
+            line = com.rtbishop.look4sat.core.domain.model.RadioPttLine.DTR, activeHigh = false))
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        val lease = fixture.service.beginTransmit(fixture.request(51L))
+        fixture.service.confirmTransmitReady(lease)
+        assertTrue(lease.usbPtt)
+        assertEquals(listOf(true), switched)
+        fixture.service.endTransmit(lease)
+        assertTrue(false in switched)
+        assertEquals(PttState.ERROR, fixture.service.state.value.pttState)
+        assertFalse(tx.operations.any { it.startsWith("ptt:") })
+        fixture.close()
+    }
+
+    @Test
     fun ft4OwnersHoldTrackingWritesDuringTwoBursts() = runTest {
         val slot = 1_800_000_000_000L
         val tx = FakeRadioController()
@@ -1989,7 +2051,8 @@ class RadioTrackingServiceTest {
         splitMode: Boolean = false,
         duplexMode: String = RadioControlSettings.DUPLEX_MODE_SPLIT,
         transport: String = RadioControlSettings.TRANSPORT_USB,
-        diagnostics: IControlDiagnostics = NoOpControlDiagnostics
+        diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
+        transportFactory: ((String, String, Int, Int) -> RadioTransport)? = null
     ) {
         val nominalTxHz = 145_900_000L
         val position = OrbitalPos(elevation = 0.5, distanceRate = 1.2, aboveHorizon = true)
@@ -2034,7 +2097,8 @@ class RadioTrackingServiceTest {
             settingsRepo = settings,
             clock = FixedClock(nowProvider),
             controllerFactory = { _, address -> if (address == "TX") tx else rx },
-            diagnostics = diagnostics
+            diagnostics = diagnostics,
+            transportFactory = transportFactory
         )
 
         fun startTracking(base: Long? = nominalTxHz) {

@@ -40,9 +40,22 @@ data class RadioProfile(
     val isFtx1: Boolean = false,
     val isFt847: Boolean = false,
     val isFt991: Boolean = false,
+    val isSdr: Boolean = false,
+    val isFlex: Boolean = false,
     val isN76: Boolean = false
 ) {
     val isIcom: Boolean get() = icomVariant != null
+    val kenwood: KenwoodModel? get() = when (model) {
+        RadioControlSettings.MODEL_KENWOOD_TH_D74 -> KenwoodModel.TH_D74
+        RadioControlSettings.MODEL_KENWOOD_TH_D75 -> KenwoodModel.TH_D75
+        RadioControlSettings.MODEL_KENWOOD_TS_2000 -> KenwoodModel.TS_2000
+        RadioControlSettings.MODEL_KENWOOD_TS_790 -> KenwoodModel.TS_790
+        RadioControlSettings.MODEL_KENWOOD_TS_990 -> KenwoodModel.TS_990
+        RadioControlSettings.MODEL_KENWOOD_TS_890 -> KenwoodModel.TS_890
+        RadioControlSettings.MODEL_KENWOOD_TS_590 -> KenwoodModel.TS_590
+        RadioControlSettings.MODEL_KENWOOD_TS_590SG -> KenwoodModel.TS_590SG
+        else -> null
+    }
     val supportsSatelliteMode: Boolean
         get() = capabilities.satelliteMode
     val canSetTxFrequencyWhileTransmitting: Boolean
@@ -52,6 +65,10 @@ data class RadioProfile(
 fun radioProfile(model: String, civAddressOverride: Int? = null): RadioProfile {
     val descriptor = radioModelDescriptor(model)
     val profile = when (descriptor.model) {
+        RadioControlSettings.MODEL_FLEX_SMARTSDR -> RadioProfile(descriptor.model,
+            capabilities = descriptor.capabilities, isFlex = true)
+        RadioControlSettings.MODEL_SDR_RIGCTLD -> RadioProfile(descriptor.model,
+            capabilities = descriptor.capabilities, isSdr = true)
         RadioControlSettings.MODEL_YAESU_FT847 -> RadioProfile(descriptor.model,
             serialStopBits = descriptor.serialStopBits, capabilities = descriptor.capabilities, isFt847 = true)
         RadioControlSettings.MODEL_YAESU_FT991 -> RadioProfile(descriptor.model,
@@ -114,7 +131,9 @@ fun radioProfile(model: String, civAddressOverride: Int? = null): RadioProfile {
             civAddress = checkNotNull(descriptor.defaultCivAddress).toByte(),
             serialStopBits = descriptor.serialStopBits,
             capabilities = descriptor.capabilities
-        ) else RadioProfile(
+        ) else if (descriptor.protocolFamily == com.rtbishop.look4sat.core.domain.model.RadioProtocolFamily.KENWOOD_CAT) {
+            RadioProfile(descriptor.model, capabilities = descriptor.capabilities, serialStopBits = descriptor.serialStopBits)
+        } else RadioProfile(
             model = RadioControlSettings.MODEL_YAESU_FT817,
             yaesuVariant = YaesuCatVariant.FT817,
             serialStopBits = descriptor.serialStopBits,
