@@ -814,10 +814,13 @@ class RadioTrackingService(
             val requestedRx = calculatorPair?.rxHz ?: rxBase?.let(position::getDownlinkFreq)
             val ic820Pair = split && controller.supportsAtomicPair &&
                 control.radioModel == RadioControlSettings.MODEL_ICOM_IC820
+            val verifiedIc820Pair = if (ic820Pair && catBudget != null) {
+                controller.tuneAndReadTrackingFrequencies(checkNotNull(requestedRx), requestedFrequency)
+                    ?: throw Ft4CatWindowExpired()
+            } else null
             val frequencySet = if (ic820Pair) {
-                val result = controller.setTrackingFrequencies(checkNotNull(requestedRx), requestedFrequency)
-                if (catBudget != null && result == FrequencyPairResult.HELD) throw Ft4CatWindowExpired()
-                result == FrequencyPairResult.APPLIED
+                if (catBudget != null) verifiedIc820Pair != null else
+                    controller.setTrackingFrequencies(checkNotNull(requestedRx), requestedFrequency) == FrequencyPairResult.APPLIED
             } else if (split) {
                 controller.setTxVfoFrequency(requestedFrequency)
             } else {
@@ -838,8 +841,7 @@ class RadioTrackingService(
                 }
             }
             val readbackFrequency = if (catBudget != null && ic820Pair) {
-                val verified = controller.readTrackingFrequencies()
-                if (verified == null && controller.isConnected) throw Ft4CatWindowExpired()
+                val verified = verifiedIc820Pair
                 check(verified != null && verified.rxHz == requestedRx) { "IC-820 SUB frequency readback did not match" }
                 verified.txHz
             } else if (split) {
@@ -1946,12 +1948,13 @@ class RadioTrackingService(
                     // Do not change the nominal pair under a waveform, even from the RX dial.
                     val ic820ManualDial = presetSingle && tx?.supportsAtomicPair == true &&
                         controlSettings.radioModel == RadioControlSettings.MODEL_ICOM_IC820
-                    val dialPair = if (!frozen && ic820ManualDial && calculated == null &&
+                    val pollIc820Dial = !frozen && ic820ManualDial && calculated == null &&
                         lastSetRx != null && lastSetTx != null &&
                         (dialFollowState.activeLeg != null || now - lastIc820DialRead >= 2_000L) &&
-                        (budget == null || mayTune && budget.remainingMillis() >= 1_000L)) {
+                        (budget == null || mayTune && budget.remainingMillis() >= 1_000L)
+                    val dialPair = if (pollIc820Dial) {
                         lastIc820DialRead = now
-                        tx.readTrackingFrequencies()
+                        tx?.readTrackingFrequencies(allowBandExchange = ft4WaveformUsers.get() == 0)
                     } else null
                     if (!frozen && (budget == null && !presetSingle || dialPair != null) &&
                         calculated == null && tx?.remoteState==null) {
@@ -2014,7 +2017,7 @@ class RadioTrackingService(
                         } else if (!sampleDial(DialLeg.TX)) {
                             sampleDial(DialLeg.RX)
                         }
-                    } else if (!ic820ManualDial || frozen) {
+                    } else if (!ic820ManualDial || frozen || pollIc820Dial) {
                         dialFollowState = DialFollowState()
                     }
                     // A synchronous UI intent can invalidate this snapshot while a read suspends.

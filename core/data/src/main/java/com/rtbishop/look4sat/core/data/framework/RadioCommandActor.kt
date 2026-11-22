@@ -213,7 +213,10 @@ class SerialRadioController(
         execute { delegate.prepareSatelliteBands(rxHz, txHz) }
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?) =
         execute { delegate.setTrackingFrequencies(rxHz, txHz) }
-    override suspend fun readTrackingFrequencies() = execute { delegate.readTrackingFrequencies() }
+    override suspend fun tuneAndReadTrackingFrequencies(rxHz: Long, txHz: Long?) =
+        execute { delegate.tuneAndReadTrackingFrequencies(rxHz, txHz) }
+    override suspend fun readTrackingFrequencies(allowBandExchange: Boolean) =
+        execute { delegate.readTrackingFrequencies(allowBandExchange) }
     override suspend fun startCw(text: String, wpm: Int) =
         actor.executePttOn { delegate.startCw(text, wpm) }
     override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay) =

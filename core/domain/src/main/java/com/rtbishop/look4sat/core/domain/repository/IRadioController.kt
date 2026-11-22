@@ -32,7 +32,13 @@ interface IRadioController {
     /** Align physical MAIN/SUB roles to TX/RX bands before preset-mode configuration. */
     suspend fun prepareSatelliteBands(rxHz: Long, txHz: Long): Boolean = true
     suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = FrequencyPairResult.UNSUPPORTED
-    suspend fun readTrackingFrequencies(): RadioBaseFrequencies? = null
+    /** Tune and verify the final pair without releasing the controller transaction. */
+    suspend fun tuneAndReadTrackingFrequencies(rxHz: Long, txHz: Long?): RadioBaseFrequencies? {
+        if (setTrackingFrequencies(rxHz, txHz) != FrequencyPairResult.APPLIED) return null
+        return readTrackingFrequencies()?.takeIf { it.rxHz == rxHz && (txHz == null || it.txHz == txHz) }
+    }
+    /** A background read may opt out of physically exchanging the MAIN and SUB bands. */
+    suspend fun readTrackingFrequencies(allowBandExchange: Boolean = true): RadioBaseFrequencies? = null
     suspend fun startCw(text: String, wpm: Int): Boolean = false
     suspend fun updateTrackingDisplay(display: RadioTrackingDisplay): Boolean = true
     suspend fun prepareTrackingContext(contextKey: String): Boolean = true

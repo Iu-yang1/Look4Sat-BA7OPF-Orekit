@@ -98,6 +98,7 @@ class Ic705Controller(
     private var ic820LastRxHz: Long? = null
     private var ic820LastTxHz: Long? = null
     private var ic820FastSubAccess = false
+    private var ic820DirectWriteVerified = false
     private var ic820FastCycles = 0
     private var ic820LastAuditNanos = 0L
     private val IC820_TUNE_THRESHOLD_HZ = 1L
@@ -125,6 +126,7 @@ class Ic705Controller(
         ic820LastRxHz = null
         ic820LastTxHz = null
         ic820FastSubAccess = false
+        ic820DirectWriteVerified = false
         ic820FastCycles = 0
         ic820LastAuditNanos = 0L
         if (deviceAddress.isBlank()) {
@@ -227,6 +229,7 @@ class Ic705Controller(
             ic820LastRxHz = null
             ic820LastTxHz = null
             ic820FastSubAccess = false
+            ic820DirectWriteVerified = false
             ic820FastCycles = 0
             duplexModeEnabled = false
             isConnected = false
@@ -384,10 +387,82 @@ class Ic705Controller(
 
     override val supportsAtomicPair: Boolean get() = variant == IcomCivVariant.IC820
 
-    override suspend fun readTrackingFrequencies(): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? =
+    override suspend fun tuneAndReadTrackingFrequencies(
+        rxHz: Long, txHz: Long?
+    ): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? = withContext(Dispatchers.IO) {
+        if (variant != IcomCivVariant.IC820 || ic820Band(rxHz) == null ||
+            txHz != null && ic820Band(txHz) == null) return@withContext null
+        ioMutex.withLock { tuneAndReadIc820PairLocked(rxHz, txHz) }
+    }
+
+    /** Write MAIN first, then SUB, so the final MAIN read also detects SATL coupling. */
+    private suspend fun tuneAndReadIc820PairLocked(
+        rxHz: Long, txHz: Long?
+    ): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? {
+        val budget = currentCoroutineContext()[Ft4CatBudget]
+        if (budget != null && budget.remainingMillis() < if (ic820FastSubAccess) 550L else 1_150L)
+            return null
+        val wasReady = ic820PairReady
+        ic820PairReady = false
+        val started = System.nanoTime()
+        val main = IcomCivProtocol.buildIc820BandAccessCommand(main = true)
+        if (!sendAndWaitAck(main)) return null
+        val originalMain = readFrequencyLocked() ?: return null
+        val targetMain = txHz ?: originalMain
+        if (ic820Band(originalMain) != ic820Band(targetMain) ||
+            ic820Band(originalMain) == ic820Band(rxHz)) return null
+        if (originalMain != targetMain &&
+            !sendAndWaitAck(IcomCivProtocol.buildSetFreqCommand(targetMain))) return null
+
+        suspend fun writeAndReadSub(): Long? {
+            if ((!wasReady || ic820LastRxHz != rxHz) &&
+                !sendAndWaitAck(IcomCivProtocol.buildSetFreqCommand(rxHz))) return null
+            return readFrequencyLocked()
+        }
+        val observedSub = if (ic820FastSubAccess) {
+            val selected = sendAndWaitAck(IcomCivProtocol.buildIc820BandAccessCommand(main = false))
+            var restored = false
+            val observed = try {
+                if (selected) writeAndReadSub() else null
+            } finally {
+                restored = withContext(NonCancellable + Ft4CatBudget.cleanup) {
+                    sendAndWaitAck(main)
+                }
+                if (!restored) dropLegacyConnection("Could not restore IC-820 MAIN access")
+            }
+            // A read-only probe does not prove that SUB frequency writes work.
+            if (observed != rxHz) ic820FastSubAccess = false
+            observed.takeIf { restored }
+        } else {
+            val (restored, observed) = ic820WithSubAsMainLocked(mainAlreadySelected = true) { writeAndReadSub() }
+            observed.takeIf { restored }
+        }
+        val observedMain = if (observedSub != null) readFrequencyLocked() else null
+        val verified = observedSub == rxHz && observedMain == targetMain
+        diagnose(if (verified) "pair/verified" else "pair/failed",
+            "transaction=tune-read-restore directSub=$ic820FastSubAccess " +
+                "targetSub=$rxHz observedSub=$observedSub targetMain=$targetMain observedMain=$observedMain " +
+                "durationMs=${(System.nanoTime() - started) / 1_000_000L}",
+            if (verified) ControlDiagnosticSeverity.INFO else ControlDiagnosticSeverity.ERROR)
+        if (!verified) return null
+        ic820LastRxHz = rxHz
+        ic820LastTxHz = targetMain
+        ic820DirectWriteVerified = ic820FastSubAccess
+        ic820FastCycles = 0
+        ic820LastAuditNanos = System.nanoTime()
+        ic820PairReady = true
+        return com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(rxHz, targetMain)
+    }
+
+    override suspend fun readTrackingFrequencies(
+        allowBandExchange: Boolean
+    ): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? =
         withContext(Dispatchers.IO) {
             if (variant != IcomCivVariant.IC820) return@withContext null
-            ioMutex.withLock { readIc820PairLocked() }
+            ioMutex.withLock {
+                if (!allowBandExchange && !ic820FastSubAccess) return@withLock null
+                readIc820PairLocked()
+            }
         }
 
     private suspend fun readIc820PairLocked(): com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? {
@@ -432,6 +507,7 @@ class Ic705Controller(
     override suspend fun prepareSatelliteBands(rxHz: Long, txHz: Long): Boolean =
         withContext(Dispatchers.IO) {
             if (variant != IcomCivVariant.IC820) return@withContext true
+            ic820DirectWriteVerified = false
             ic820PairReady = false
             ic820LastRxHz = null
             ic820LastTxHz = null
@@ -445,15 +521,16 @@ class Ic705Controller(
                 if (!sendAndWaitAck(main)) return@withLock false
                 val originalMain = readFrequencyLocked() ?: return@withLock false
                 if (ic820Band(originalMain) == txBand) {
+                    val direct = probeIc820SubAccessLocked(rxBand) ?: return@withLock false
+                    if (direct) {
+                        ic820FastSubAccess = true
+                        return@withLock true
+                    }
                     // Checking SUB prevents a misleading ready state when both
                     // physical bands are already configured for the same band.
                     val (restored, originalSub) = ic820WithSubAsMainLocked { readFrequencyLocked() }
                     val matched = restored && originalSub != null && ic820Band(originalSub) == rxBand
-                    if (matched) {
-                        val available = probeIc820SubAccessLocked(rxBand)
-                            ?: return@withLock false
-                        ic820FastSubAccess = available
-                    } else ic820FastSubAccess = false
+                    ic820FastSubAccess = false
                     diagnose(if (matched) "band-align/ready" else "band-align/mismatch",
                         "swapped=false main=$originalMain sub=$originalSub txBand=$txBand rxBand=$rxBand",
                         if (matched) ControlDiagnosticSeverity.INFO else ControlDiagnosticSeverity.ERROR)
@@ -642,18 +719,18 @@ class Ic705Controller(
             ioMutex.withLock {
                 val budget = currentCoroutineContext()[Ft4CatBudget]
                 if (budget != null) {
-                    if (!ic820PairReady ||
-                        ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES && !ic820FastSubAccess) {
-                        readIc820PairLocked()
-                        return@withLock FrequencyPairResult.HELD
-                    }
-                    val minimum = when {
-                        ic820FastCycles >= IC820_VERIFY_EVERY_CYCLES ||
-                            ic820FastSubAccess && System.nanoTime() - ic820LastAuditNanos >= IC820_AUDIT_INTERVAL_NANOS -> 1_150L
-                        ic820FastSubAccess -> 550L
-                        else -> 850L
-                    }
+                    val minimum = if (ic820FastSubAccess) 550L else 1_150L
                     if (budget.remainingMillis() < minimum) return@withLock FrequencyPairResult.HELD
+                    // Audit the final pair in the tuning transaction rather than
+                    // consuming one window auditing and another window tuning.
+                    return@withLock if (tuneAndReadIc820PairLocked(rxHz, txHz) != null)
+                        FrequencyPairResult.APPLIED else FrequencyPairResult.FAILED
+                }
+                // The first real write must verify both final frequencies, even
+                // if the read-only D0 probe already selected the expected band.
+                if (ic820FastSubAccess && (!ic820DirectWriteVerified || !ic820PairReady)) {
+                    return@withLock if (tuneAndReadIc820PairLocked(rxHz, txHz) != null)
+                        FrequencyPairResult.APPLIED else FrequencyPairResult.FAILED
                 }
                 tuneIc820FastLocked(rxHz, txHz)?.let { return@withLock it }
                 val startedNanos = System.nanoTime()
@@ -1297,10 +1374,13 @@ class Ic705Controller(
      * This uses only documented IC-820 commands 07 B0, 07 D1, 03/04/05/06.
      * Caller owns ioMutex.
      */
-    private suspend fun <T> ic820WithSubAsMainLocked(operation: suspend () -> T): Pair<Boolean, T?> {
+    private suspend fun <T> ic820WithSubAsMainLocked(
+        mainAlreadySelected: Boolean = false,
+        operation: suspend () -> T
+    ): Pair<Boolean, T?> {
         val main = IcomCivProtocol.buildIc820BandAccessCommand(main = true)
         val swap = IcomCivProtocol.buildIc820MainSubExchangeCommand()
-        if (!sendAndWaitAck(main) || !sendAndWaitAck(swap)) return false to null
+        if ((!mainAlreadySelected && !sendAndWaitAck(main)) || !sendAndWaitAck(swap)) return false to null
         var value: T? = null
         var performed = false
         var restored = false
@@ -1325,9 +1405,23 @@ class Ic705Controller(
         val mainModeCommand = txMode?.let(::buildModelModeCommand)
         return ioMutex.withLock {
             if (rxMode != null) {
-                val (restored, applied) = ic820WithSubAsMainLocked {
+                suspend fun configureSub(): Boolean =
                     sendAndWaitAck(checkNotNull(subModeCommand)) &&
                         readModeLocked() == normalizedMode(rxMode)
+                val (restored, applied) = if (ic820FastSubAccess) {
+                    val selected = sendAndWaitAck(IcomCivProtocol.buildIc820BandAccessCommand(main = false))
+                    var mainRestored = false
+                    val configured = try {
+                        selected && configureSub()
+                    } finally {
+                        mainRestored = withContext(NonCancellable + Ft4CatBudget.cleanup) {
+                            sendAndWaitAck(IcomCivProtocol.buildIc820BandAccessCommand(main = true))
+                        }
+                        if (!mainRestored) dropLegacyConnection("Could not restore IC-820 MAIN access")
+                    }
+                    mainRestored to configured
+                } else ic820WithSubAsMainLocked {
+                    configureSub()
                 }
                 if (!restored || applied != true) return@withLock false
             }
