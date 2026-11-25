@@ -814,14 +814,15 @@ class RadioTrackingService(
             val rxBase = current.nominalRxFrequencyHz ?: nativeBaseOverride?.rxHz ?:
                 TransponderMapper.mapUplinkToDownlink(nominal, transponder) ?: transponder.downlinkLow
             val requestedRx = calculatorPair?.rxHz ?: rxBase?.let(position::getDownlinkFreq)
-            val ic820Pair = split && controller.supportsAtomicPair &&
-                control.radioModel == RadioControlSettings.MODEL_ICOM_IC820
-            val verifiedIc820Pair = if (ic820Pair && catBudget != null) {
+            val nativePair = split && controller.supportsAtomicPair && requestedRx != null &&
+                (control.radioModel == RadioControlSettings.MODEL_ICOM_IC820 ||
+                    control.radioModel == RadioControlSettings.MODEL_YAESU_FT817)
+            val verifiedPair = if (nativePair && catBudget != null) {
                 controller.tuneAndReadTrackingFrequencies(checkNotNull(requestedRx), requestedFrequency)
                     ?: throw Ft4CatWindowExpired()
             } else null
-            val frequencySet = if (ic820Pair) {
-                if (catBudget != null) verifiedIc820Pair != null else
+            val frequencySet = if (nativePair) {
+                if (catBudget != null) verifiedPair != null else
                     controller.setTrackingFrequencies(checkNotNull(requestedRx), requestedFrequency) == FrequencyPairResult.APPLIED
             } else if (split) {
                 controller.setTxVfoFrequency(requestedFrequency)
@@ -829,7 +830,7 @@ class RadioTrackingService(
                 controller.setFrequency(requestedFrequency)
             }
             check(frequencySet) { "TX frequency command was not acknowledged" }
-            if (catBudget != null && requestedRx != null && !ic820Pair) {
+            if (catBudget != null && requestedRx != null && !nativePair) {
                 val receiver = if (split) controller else rxController?.takeIf { it.isConnected }
                 if (receiver?.supportsFrequencyControl == true) {
                     val applied = if (split) receiver.setWorkingFrequency(requestedRx) else receiver.setFrequency(requestedRx)
@@ -842,9 +843,13 @@ class RadioTrackingService(
                     }
                 }
             }
-            val readbackFrequency = if (catBudget != null && ic820Pair) {
-                val verified = verifiedIc820Pair
-                check(verified != null && verified.rxHz == requestedRx) { "IC-820 SUB frequency readback did not match" }
+            val readbackFrequency = if (catBudget != null && nativePair) {
+                val verified = verifiedPair
+                val expectedRx = checkNotNull(requestedRx)
+                val tolerance = if (control.radioModel == RadioControlSettings.MODEL_YAESU_FT817) 9L else 0L
+                check(verified != null && kotlin.math.abs(verified.rxHz - expectedRx) <= tolerance) {
+                    "RX frequency pair readback did not match"
+                }
                 verified.txHz
             } else if (split) {
                 if (catBudget == null) {
@@ -1827,7 +1832,12 @@ class RadioTrackingService(
         transmitMutex.withLock {
             val txBase = if (transponder.uplinkLow == null) null else initialTxBaseFreqHz ?: transponder.uplinkCenterFrequency()
             val rxBase = transponder.downlinkLow
-            val ic820 = settingsRepo.radioControlSettings.value.radioModel == RadioControlSettings.MODEL_ICOM_IC820
+            val model = settingsRepo.radioControlSettings.value.radioModel
+            val ic820 = model == RadioControlSettings.MODEL_ICOM_IC820
+            val nativeYaesu = model == RadioControlSettings.MODEL_YAESU_FT817 && radio.supportsAtomicPair
+            if (nativeYaesu && !radio.prepareTrackingContext(radioContextKey(transponder.uuid))) {
+                return failTrackingInitialization("Yaesu receive VFO could not be read; see yaesu diagnostics")
+            }
             val txMode = controlUplinkMode(transponder)
             val rxMode = controlDownlinkMode(transponder, txMode)
             // IC-820 MAIN can initially be VHF or UHF. Align physical roles
@@ -1854,7 +1864,7 @@ class RadioTrackingService(
                 txBaseFrequencyHz = if (transponder.uplinkLow != null) nativeBaseOverride?.txHz ?: txBase else null) }
             diagnose("tracking/ready", if (ic820)
                 "mode=ic820-main-tx-sub-rx; independent CI-V band access"
-                else if (radio.supportsAtomicPair) "mode=yaesu-native-split; preserve operator RX VFO"
+                else if (nativeYaesu) "mode=yaesu-native-split; preserve operator RX VFO"
                 else "mode=single-radio-preset; radio owns TX/RX mode and VFO selection")
         }
         runTrackingLoop(split = true, presetSingle = true)

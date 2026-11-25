@@ -38,6 +38,7 @@ class Ft817NativeSplitTest {
                 0x02, 0x82 -> { split = opcode == 2; byteArrayOf(0) }
                 0xF7 -> byteArrayOf(if (ptt) 0 else 0xFF.toByte())
                 0x88 -> { ptt = false; byteArrayOf(0) }
+                0x0A, 0x0B -> byteArrayOf(0)
                 else -> error("Unexpected opcode $opcode")
             }
             pending.addAll(response.toList())
@@ -61,11 +62,27 @@ class Ft817NativeSplitTest {
             assertArrayEquals(byteArrayOf(1, 8), link.modes)
             assertEquals(RadioBaseFrequencies(435_101_230L, 145_901_580L), radio.readTrackingFrequencies())
             assertEquals(rxA, link.aSelected)
+            assertTrue(radio.configureTxCtcss(67.0))
+            assertEquals(rxA, link.aSelected)
             val writes = link.opcodes.count { it == 1 }
             assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_101_237L, 145_901_589L))
             assertEquals(writes, link.opcodes.count { it == 1 })
             radio.disconnect()
         }
+    }
+
+    @Test fun newTrackingContextUsesNewlySelectedReceiveVfo() = runBlocking {
+        val link = Radio()
+        val radio = Ft817Controller(null, "sim", link)
+        assertTrue(radio.connect())
+        assertTrue(radio.prepareTrackingContext("first"))
+        link.aSelected = false
+        assertTrue(radio.prepareTrackingContext("second"))
+        assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_100_000, 145_900_000))
+        assertEquals(435_100_000L, link.frequencies[1])
+        assertEquals(145_900_000L, link.frequencies[0])
+        assertFalse(link.aSelected)
+        radio.disconnect()
     }
 
     @Test fun holdsWhileTransmittingAndRestoresAfterFailedWrite() = runBlocking {

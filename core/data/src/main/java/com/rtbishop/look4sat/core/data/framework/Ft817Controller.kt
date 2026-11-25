@@ -177,6 +177,20 @@ class Ft817Controller(
         }
     }
 
+    override suspend fun prepareTrackingContext(contextKey: String): Boolean {
+        if (!supportsAtomicPair) return true
+        return withContext(Dispatchers.IO) {
+            ioMutex.withLock {
+                if (readPttLocked() != false) return@withLock false
+                val selected = readVfoLocked() ?: return@withLock false
+                presetRxVfoA = selected
+                diagnostics.record(ControlDiagnosticSource.RADIO, "yaesu/preset",
+                    "rxVfo=${if (selected) "A" else "B"} split=${readSplitLocked()}")
+                true
+            }
+        }
+    }
+
     private suspend fun restoreRxLocked(rxVfoA: Boolean): Boolean = withContext(NonCancellable) {
         withTimeoutOrNull(1_000L) { selectVfoLocked(rxVfoA) } == true
     }.also { if (!it) catFailure("restore", "RX VFO restoration failed targetA=$rxVfoA") }
@@ -248,7 +262,8 @@ class Ft817Controller(
                 withPresetVfosLocked(false) { rxA ->
                     if (!selectVfoLocked(rxA)) return@withPresetVfosLocked null
                     val rx = readFrequencyLocked()?.first ?: return@withPresetVfosLocked null
-                    if (readSplitLocked() != true) return@withPresetVfosLocked RadioBaseFrequencies(rx, null)
+                    val split = readSplitLocked() ?: return@withPresetVfosLocked null
+                    if (!split) return@withPresetVfosLocked RadioBaseFrequencies(rx, null)
                     if (!selectVfoLocked(!rxA)) return@withPresetVfosLocked null
                     val tx = readFrequencyLocked()?.first ?: return@withPresetVfosLocked null
                     RadioBaseFrequencies(rx, tx)
@@ -297,6 +312,16 @@ class Ft817Controller(
                 } == true
             }
         }
+    }
+
+    override suspend fun configureTxCtcss(toneHz: Double?): Boolean {
+        if (!supportsAtomicPair) return super<IRadioController>.configureTxCtcss(toneHz)
+        return accessLeg(true) {
+            if (toneHz != null) {
+                sendCommandWithAck(Ft817CatProtocol.buildSetCtcssToneCommand(toneHz)) &&
+                    sendCommandWithAck(Ft817CatProtocol.buildCtcssModeCommand(true))
+            } else sendCommandWithAck(Ft817CatProtocol.buildCtcssModeCommand(false))
+        } == true
     }
 
     override suspend fun setTxDataMode(enabled: Boolean, baseMode: String): Boolean {
