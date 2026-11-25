@@ -27,6 +27,16 @@ internal fun presetHalfDuplexLeg(observed: Long, rxHz: Long?, txHz: Long?): Bool
 internal suspend fun tunePresetHalfDuplex(
     radio: IRadioController, ic820: Boolean, rxHz: Long?, txHz: Long?
 ): PresetTuningResult {
+    if (!ic820 && radio.supportsAtomicPair && rxHz != null) {
+        // Native FT-817/818 pair verifies both legs at CAT's 10 Hz resolution.
+        return when (radio.setTrackingFrequencies(rxHz, txHz)) {
+            FrequencyPairResult.APPLIED -> PresetTuningResult(
+                Ft817CatProtocol.quantizeFrequencyHz(rxHz),
+                txHz?.let(Ft817CatProtocol::quantizeFrequencyHz))
+            FrequencyPairResult.HELD -> PresetTuningResult()
+            else -> PresetTuningResult(success = false)
+        }
+    }
     if (!ic820) {
         val observed = radio.readFrequencyAndMode()?.first ?: return PresetTuningResult(success = false)
         return when (presetHalfDuplexLeg(observed, rxHz, txHz)) {
