@@ -1,0 +1,201 @@
+name: Replace Orekit 15.05 with FT-817 native split test build
+on:
+  push:
+    branches: [build/orekit-15-05-ft817-replacement]
+    paths: [.github/workflows/replace-orekit-15-05-ft817.yml]
+permissions:
+  contents: write
+concurrency:
+  group: orekit-15-05-release-replacement
+  cancel-in-progress: false
+jobs:
+  build-and-replace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SOURCE_SHA: 4d3491600038e5ffe974d549ad452881e18b19a5
+      OLD_SHA: fab5b8f479daffe46f5be3226d6df506a8d66c7a
+      TAG: 4.4.8-ba7opf-orekit.15.05
+      PKG: cn.ba7opf.look4sat.orekit
+      CODE: "639"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4d3491600038e5ffe974d549ad452881e18b19a5
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify source and target release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          grep -Fq "appVersionName = \"$TAG\"" gradle/libs.versions.toml
+          grep -Fq "appVersionCode = \"$CODE\"" gradle/libs.versions.toml
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/before.json"
+          python3 - <<'PY'
+          import os,json,pathlib
+          r=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'before.json').read_text())
+          assert r['id']==454424479 and r['tag_name']==os.environ['TAG'] and not r['draft'] and not r['prerelease']
+          assert {a['name'] for a in r['assets']}=={
+              'Look4Sat-BA7OPF-Orekit-4.4.8-ba7opf-orekit.15.05-fab5b8f4-release.apk',
+              'Look4Sat-BA7OPF-Orekit-4.4.8-ba7opf-orekit.15.05-fab5b8f4-release.aab',
+              'SHA256SUMS.txt','update.json','verification.json'}
+          PY
+          echo "APK=Look4Sat-BA7OPF-Orekit-$TAG-${SOURCE_SHA:0:8}-release.apk" >> "$GITHUB_ENV"
+          echo "AAB=Look4Sat-BA7OPF-Orekit-$TAG-${SOURCE_SHA:0:8}-release.aab" >> "$GITHUB_ENV"
+      - name: Install pinned Android native components
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;26.1.10909125' 'cmake;3.22.1'
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ft4-rust-1.98.1-${{ runner.os }}-${{ hashFiles('core/ft4-native/rust/Cargo.lock') }}
+      - name: Run regression tests and compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check-cw-template-icu.py
+          ./gradlew --no-daemon :core:domain:test :core:data:testDebugUnitTest :feature:radar:testDebugUnitTest :feature:map:testDebugUnitTest :app:compileDebugKotlin :app:lintRelease
+      - name: Run aislop review
+        continue-on-error: true
+        shell: bash
+        run: |
+          npx --yes aislop@latest scan --changes --base "$OLD_SHA" --json > "$RUNNER_TEMP/aislop.json"
+          test -s "$RUNNER_TEMP/aislop.json"
+          head -c 10000 "$RUNNER_TEMP/aislop.json"
+      - name: Build signed APK and AAB
+        shell: bash
+        env:
+          KEY_STORE_BASE64: ${{ secrets.KEY_STORE }}
+          LOOK4SAT_RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          LOOK4SAT_RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          LOOK4SAT_RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEY_STORE_BASE64 LOOK4SAT_RELEASE_STORE_PASSWORD LOOK4SAT_RELEASE_KEY_ALIAS LOOK4SAT_RELEASE_KEY_PASSWORD; do
+            test -n "$(printenv "$name")"
+          done
+          export LOOK4SAT_RELEASE_STORE_FILE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$LOOK4SAT_RELEASE_STORE_FILE"' EXIT
+          printf '%s' "$KEY_STORE_BASE64" | base64 --decode > "$LOOK4SAT_RELEASE_STORE_FILE"
+          ./gradlew --no-daemon :app:assembleRelease :app:bundleRelease
+      - name: Verify original signing certificate, versions, ABIs and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist original
+          test "$(find app/build/outputs/apk/release -name '*.apk' -type f | wc -l)" = 1
+          test "$(find app/build/outputs/bundle/release -name '*.aab' -type f | wc -l)" = 1
+          cp "$(find app/build/outputs/apk/release -name '*.apk' -type f)" "dist/$APK"
+          cp "$(find app/build/outputs/bundle/release -name '*.aab' -type f)" "dist/$AAB"
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$bt/apksigner" verify --verbose --print-certs "dist/$APK" > "$RUNNER_TEMP/newcert"
+          "$bt/zipalign" -c -v 4 "dist/$APK"
+          badging=$("$bt/aapt" dump badging "dist/$APK" | head -1)
+          [[ "$badging" == *"name='$PKG'"* ]]
+          [[ "$badging" == *"versionCode='$CODE'"* ]]
+          [[ "$badging" == *"versionName='$TAG'"* ]]
+          unzip -Z1 "dist/$APK" | grep -Fx lib/arm64-v8a/liblook4sat_ft4.so
+          unzip -Z1 "dist/$APK" | grep -Fx lib/armeabi-v7a/liblook4sat_ft4.so
+          jarsigner -verify "dist/$AAB"
+          old="Look4Sat-BA7OPF-Orekit-$TAG-fab5b8f4-release.apk"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$old" --dir original
+          "$bt/apksigner" verify --verbose --print-certs "original/$old" > "$RUNNER_TEMP/oldcert"
+          sed -nE 's/.*certificate SHA-256 digest: ([[:xdigit:]]+).*/\1/p' "$RUNNER_TEMP/newcert" | head -1 > "$RUNNER_TEMP/newhash"
+          sed -nE 's/.*certificate SHA-256 digest: ([[:xdigit:]]+).*/\1/p' "$RUNNER_TEMP/oldcert" | head -1 > "$RUNNER_TEMP/oldhash"
+          test -s "$RUNNER_TEMP/newhash"
+          cmp "$RUNNER_TEMP/newhash" "$RUNNER_TEMP/oldhash"
+          python3 - <<'PY'
+          import os,json,pathlib,hashlib,xml.etree.ElementTree as ET
+          out=pathlib.Path('dist')
+          files=list(pathlib.Path('.').glob('**/build/test-results/**/TEST-*.xml'))
+          assert files
+          totals={k:0 for k in ('tests','failures','errors','skipped')}
+          focused=[]
+          for p in files:
+              t=ET.parse(p).getroot()
+              for k in totals: totals[k]+=int(t.get(k,0))
+              if 'Ft817' in p.name:
+                  focused.append({'suite':p.name,**{k:int(t.get(k,0)) for k in totals}})
+          assert any('Ft817NativeSplitTest' in x['suite'] for x in focused),focused
+          assert not totals['failures'] and not totals['errors'],totals
+          assets={n:{'sha256':hashlib.sha256((out/n).read_bytes()).hexdigest(),'size_bytes':(out/n).stat().st_size} for n in (os.environ['APK'],os.environ['AAB'])}
+          result={'tag':os.environ['TAG'],'applicationId':os.environ['PKG'],'version_code':int(os.environ['CODE']),
+              'source_commit':os.environ['SOURCE_SHA'],'pr':32,'tests':totals,'ft817_suites':focused,
+              'signing_certificate_verified':True,'certificate_sha256':(pathlib.Path(os.environ['RUNNER_TEMP'])/'newhash').read_text().strip(),
+              'apk_alignment_verified':True,'aab_signature_verified':True,'native_abis':['arm64-v8a','armeabi-v7a'],
+              'lint_and_build_passed':True,'physical_radio_tested':False,'assets':assets}
+          (out/'verification.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf8')
+          print(json.dumps(result,ensure_ascii=False,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orekit-15-05-ft817-verified
+          path: dist/
+          if-no-files-found: error
+      - name: Replace release assets and refresh bilingual verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/current.json"
+          python3 - <<'PY'
+          import os,json,pathlib
+          d=pathlib.Path(os.environ['RUNNER_TEMP'])
+          a=json.loads((d/'before.json').read_text()); b=json.loads((d/'current.json').read_text())
+          assert a['id']==b['id'] and a['body']==b['body'] and a['name']==b['name']
+          assert {x['id'] for x in a['assets']}=={x['id'] for x in b['assets']}
+          report=json.loads(pathlib.Path('dist/verification.json').read_text())
+          s=report['source_commit']; t=report['tests']; stats=f"{t['tests']} tests, {t['failures']} failures, {t['errors']} errors, {t['skipped']} skipped"
+          eng=f"\n- FT-817/818 test replacement (PR #32): native CAT VFO/SPLIT state reads, verified RX/TX Doppler tuning and RX VFO restoration. Source: {s}; package and version code unchanged.\n\nReplacement verification: {stats}. Android compilation, lint, signed APK/AAB, original signing certificate and both native ABIs verified. Real-radio CAT/PTT testing is pending.\n"
+          chi=f"\n- FT-817/818 测试替换构建（PR #32）：原生 CAT VFO/SPLIT 状态读取、收发双频回读及接收 VFO 恢复。源码：{s}；包名及版本码不变。\n\n替换构建验证：{t['tests']} 项测试，{t['failures']} 项失败、{t['errors']} 项错误、{t['skipped']} 项跳过。Android 编译、Lint、APK/AAB 签名、原签名证书及两种原生 ABI 已核验。实机 CAT/PTT 测试待完成。\n"
+          marker='## '+os.environ['TAG']+' — 中文'
+          assert b['body'].count(marker)==1
+          en,zh=b['body'].split(marker,1)
+          (d/'notes.md').write_text(en.rstrip()+'\n'+eng+'\n'+marker+zh.rstrip()+'\n'+chi,encoding='utf8')
+          PY
+          # Publish the verified new binaries before removing superseded binaries.
+          gh release upload "$TAG" "dist/$APK" "dist/$AAB" --repo "$GITHUB_REPOSITORY"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/uploaded.json"
+          python3 - <<'PY'
+          import os,json,hashlib,pathlib
+          d=pathlib.Path('dist')
+          r=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'uploaded.json').read_text())
+          a={x['name']:x for x in r['assets']}
+          for n in (os.environ['APK'],os.environ['AAB']):
+              assert a[n]['state']=='uploaded' and a[n]['digest']=='sha256:'+hashlib.sha256((d/n).read_bytes()).hexdigest(),n
+          PY
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release delete-asset "$TAG" "Look4Sat-BA7OPF-Orekit-$TAG-fab5b8f4-release.apk" --repo "$GITHUB_REPOSITORY" --yes
+          gh release delete-asset "$TAG" "Look4Sat-BA7OPF-Orekit-$TAG-fab5b8f4-release.aab" --repo "$GITHUB_REPOSITORY" --yes
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/after.json"
+          python3 tools/build-update-manifest.py --release-json "$RUNNER_TEMP/after.json" --output dist/update.json
+          (cd dist && sha256sum "$APK" "$AAB" verification.json update.json > SHA256SUMS.txt)
+          gh release upload "$TAG" dist/verification.json dist/update.json dist/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/final.json"
+          python3 - <<'PY'
+          import os,json,pathlib,hashlib
+          r=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'final.json').read_text())
+          assert r['id']==454424479 and r['tag_name']==os.environ['TAG']
+          a={x['name']:x for x in r['assets']}
+          assert set(a)=={os.environ['APK'],os.environ['AAB'],'verification.json','update.json','SHA256SUMS.txt'}
+          for n,x in a.items():
+              assert x['state']=='uploaded' and x['digest']=='sha256:'+hashlib.sha256((pathlib.Path('dist')/n).read_bytes()).hexdigest(),n
+          print('Release replacement verified.')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: orekit-15-05-failed-test-results
+          path: '**/build/test-results/**/TEST-*.xml'
+          if-no-files-found: ignore
