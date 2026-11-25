@@ -27,6 +27,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Ft817CatProtocolTest {
+    @Test fun hamlibVfoAndSplitEepromCommands() {
+        assertArrayEquals(byteArrayOf(0, 0x55, 0, 0, 0xBB.toByte()),
+            Ft817CatProtocol.buildEepromReadCommand(Ft817CatProtocol.VFO_STATE_ADDRESS))
+        assertArrayEquals(byteArrayOf(0, 0x7A, 0, 0, 0xBB.toByte()),
+            Ft817CatProtocol.buildEepromReadCommand(Ft817CatProtocol.SPLIT_STATE_ADDRESS))
+        assertEquals(true, Ft817CatProtocol.parseVfoA(byteArrayOf(0, 1)))
+        assertEquals(false, Ft817CatProtocol.parseVfoA(byteArrayOf(1, 0)))
+        assertNull(Ft817CatProtocol.parseVfoA(byteArrayOf(0)))
+        assertEquals(true, Ft817CatProtocol.parseSplitEnabled(byteArrayOf(0x80.toByte(), 0)))
+        assertEquals(false, Ft817CatProtocol.parseSplitEnabled(byteArrayOf(0, 0x80.toByte())))
+        assertArrayEquals(byteArrayOf(0, 0, 0, 0, 0x81.toByte()), Ft817CatProtocol.buildVfoToggleCommand())
+        assertArrayEquals(byteArrayOf(0, 0, 0, 0, 2), Ft817CatProtocol.buildSplitCommand(true))
+        assertArrayEquals(byteArrayOf(0, 0, 0, 0, 0x82.toByte()), Ft817CatProtocol.buildSplitCommand(false))
+    }
+
     @Test fun narrowFmAndAfskAliasesUseTheDocumentedLegacyOpcodes() {
         assertArrayEquals(Ft817CatProtocol.buildSetModeCommand("FM-N"),Ft817CatProtocol.buildSetModeCommand("NFM"))
         assertArrayEquals(Ft817CatProtocol.buildSetModeCommand("FM-N"),Ft817CatProtocol.buildSetModeCommand("FMN"))

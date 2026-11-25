@@ -619,14 +619,16 @@ class RadioTrackingService(
                 Ft817Controller(
                     bluetoothManager = checkNotNull(bluetoothManager),
                     deviceAddress = address,
-                    variant = checkNotNull(profile.yaesuVariant)
+                    variant = checkNotNull(profile.yaesuVariant),
+                    diagnostics = diagnostics
                 )
             } else {
                 Ft817Controller(
                     bluetoothManager = null,
                     deviceAddress = address,
                     transport = transport,
-                    variant = checkNotNull(profile.yaesuVariant)
+                    variant = checkNotNull(profile.yaesuVariant),
+                    diagnostics = diagnostics
                 )
             }
         }
@@ -1852,6 +1854,7 @@ class RadioTrackingService(
                 txBaseFrequencyHz = if (transponder.uplinkLow != null) nativeBaseOverride?.txHz ?: txBase else null) }
             diagnose("tracking/ready", if (ic820)
                 "mode=ic820-main-tx-sub-rx; independent CI-V band access"
+                else if (radio.supportsAtomicPair) "mode=yaesu-native-split; preserve operator RX VFO"
                 else "mode=single-radio-preset; radio owns TX/RX mode and VFO selection")
         }
         runTrackingLoop(split = true, presetSingle = true)
@@ -2056,6 +2059,7 @@ class RadioTrackingService(
                             if (!result.success && budget == null) failTrackingCommand(if (
                                 controlSettings.radioModel == RadioControlSettings.MODEL_ICOM_IC820
                             ) "IC-820 CAT frequency pair not applied; see civ/pair/failed diagnostics"
+                            else if (tx.supportsAtomicPair) "Yaesu CAT frequency pair not applied; see yaesu diagnostics"
                             else "Preset RX/TX VFO could not be identified or tuned; check the radio preset")
                         } else if (split && tx?.supportsAtomicPair == true && desiredRx != null) {
                             when (tx.setTrackingFrequencies(desiredRx, desiredTx)) {

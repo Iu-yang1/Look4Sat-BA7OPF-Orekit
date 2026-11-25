@@ -30,6 +30,27 @@ object Ft817CatProtocol {
     const val CMD_CTCSS_MODE: Byte = 0x0A
     const val CMD_CTCSS_TONE: Byte = 0x0B
     const val CMD_READ_TX_STATUS: Byte = 0xF7.toByte()
+    const val CMD_VFO_TOGGLE: Byte = 0x81.toByte()
+    const val CMD_SPLIT_ON: Byte = 0x02
+    const val CMD_SPLIT_OFF: Byte = 0x82.toByte()
+    const val CMD_EEPROM_READ: Byte = 0xBB.toByte()
+
+    // Hamlib rigs/yaesu/ft817.c: get_vfo and get_split_vfo.
+    const val VFO_STATE_ADDRESS = 0x0055
+    const val SPLIT_STATE_ADDRESS = 0x007A
+
+    fun buildVfoToggleCommand() = byteArrayOf(0, 0, 0, 0, CMD_VFO_TOGGLE)
+    fun buildSplitCommand(enabled: Boolean) =
+        byteArrayOf(0, 0, 0, 0, if (enabled) CMD_SPLIT_ON else CMD_SPLIT_OFF)
+    fun buildEepromReadCommand(address: Int): ByteArray {
+        require(address in 0..0xFFFF)
+        return byteArrayOf((address shr 8).toByte(), address.toByte(), 0, 0, CMD_EEPROM_READ)
+    }
+    fun parseVfoA(response: ByteArray): Boolean? =
+        if (response.size == 2) (response[0].toInt() and 1) == 0 else null
+    fun parseSplitEnabled(response: ByteArray): Boolean? =
+        if (response.size == 2) (response[0].toInt() and 0x80) != 0 else null
+    fun quantizeFrequencyHz(hz: Long): Long = hz / 10 * 10
 
     const val CTCSS_ENC_ON: Byte = 0x4A
     const val CTCSS_OFF: Byte = 0x8A.toByte()
