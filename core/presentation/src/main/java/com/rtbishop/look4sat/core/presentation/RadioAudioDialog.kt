@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -40,13 +41,13 @@ fun RadioAudioSettingsContent(
     modifier: Modifier = Modifier,
     showTitle: Boolean = true
 ) {
-    var backend by remember { mutableStateOf(initial.backend) }
-    var input by remember { mutableStateOf(initial.rxDeviceKey) }
-    var output by remember { mutableStateOf(initial.txDeviceKey) }
-    var host by remember { mutableStateOf(initial.host) }
-    var port by remember { mutableStateOf(initial.controlPort.toString()) }
-    var networkCat by remember { mutableStateOf(initial.networkCat) }
-    var txLatency by remember { mutableStateOf(initial.txLatencyMillis.toString()) }
+    var backend by rememberSaveable(model, initial) { mutableStateOf(initial.backend) }
+    var input by rememberSaveable(model, initial) { mutableStateOf(initial.rxDeviceKey) }
+    var output by rememberSaveable(model, initial) { mutableStateOf(initial.txDeviceKey) }
+    var host by rememberSaveable(model, initial) { mutableStateOf(initial.host) }
+    var port by rememberSaveable(model, initial) { mutableStateOf(initial.controlPort.toString()) }
+    var networkCat by rememberSaveable(model, initial) { mutableStateOf(initial.networkCat) }
+    var txLatency by rememberSaveable(model, initial) { mutableStateOf(initial.txLatencyMillis.toString()) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }

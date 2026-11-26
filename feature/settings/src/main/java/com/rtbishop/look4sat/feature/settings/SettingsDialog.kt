@@ -17,8 +17,6 @@
  */
 package com.rtbishop.look4sat.feature.settings
 
-import com.rtbishop.look4sat.core.presentation.RadioAudioDialog
-
 import android.Manifest
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
@@ -1262,9 +1260,12 @@ fun RadioControlDialog(
     var bluetoothTarget by rememberSaveable { mutableStateOf("") }
     var connectAfterSave by remember { mutableStateOf(false) }
     val radioModel = rememberSaveable { mutableStateOf(initialSettings.radioModel) }
-    var audioSettings by remember(radioModel.value) { mutableStateOf(
+    var audioSettings by rememberSaveable(radioModel.value, stateSaver = radioAudioDraftSaver) { mutableStateOf(
         audioSettingsForModel(radioModel.value)) }
-    var showAudioSettings by remember { mutableStateOf(false) }
+    var showAudioSettings by rememberSaveable { mutableStateOf(false) }
+    val audioEditorState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    var previousCatTransport by rememberSaveable { mutableStateOf(
+        if (initialSettings.radioAudio.networkCat) RadioControlSettings.TRANSPORT_BLUETOOTH else initialSettings.catTransport) }
     val initialBaudRates = radioBaudRates(initialSettings.radioModel)
     val splitMode  = rememberSaveable { mutableStateOf(initialSettings.splitMode) }
     val catRts = rememberSaveable { mutableStateOf(initialSettings.catRts) }
@@ -1504,7 +1505,7 @@ fun RadioControlDialog(
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-    val isSingleRadio = splitMode.value || isL4s || isN76 || radioModel.value == RadioControlSettings.MODEL_FLEX_SMARTSDR
+    val isSingleRadio = splitMode.value || audioSettings.networkCat || isL4s || isN76 || radioModel.value == RadioControlSettings.MODEL_FLEX_SMARTSDR
     val requiredStopBits = modelDescriptor.serialStopBits
 
     val baudRates = radioBaudRates(radioModel.value)
@@ -1699,7 +1700,7 @@ fun RadioControlDialog(
                 catRts         = catRts.value,
                 catDtr         = catDtr.value,
                 usbFlowControl = com.rtbishop.look4sat.core.domain.control.SerialUsbFlow.valueOf(usbFlow.value),
-                splitMode      = splitMode.value,
+                splitMode      = splitMode.value || audioSettings.networkCat,
                 catTransport   = catTransport.value,
                 duplexMode     = if (supportsSatelliteMode) {
                     duplexMode.value
@@ -1736,16 +1737,25 @@ fun RadioControlDialog(
         }
     }
 
-    if(showAudioSettings && radioAudioSession!=null) RadioAudioDialog(audioSettings,radioModel.value,radioAudioSession,
-        onDismiss={ showAudioSettings=false },onSave={ value ->
-            audioSettings=value
-            if(value.networkCat) {
-                catTransport.value=RadioControlSettings.TRANSPORT_TCP
-                txAddress.value="${value.host}:${value.controlPort}"
-                splitMode.value=true
-                tcpProtocol.value=RadioControlSettings.TCP_PROTOCOL_RAW_CAT
-            }
-        })
+    fun applyAudioSettings(value: com.rtbishop.look4sat.core.domain.audio.RadioAudioSettings) {
+        val wasWlanCat = audioSettings.networkCat
+        audioSettings = value
+        if (value.networkCat) {
+            if (!wasWlanCat) previousCatTransport = catTransport.value
+            // Preserve stored settings; networkCat selects the negotiated Icom WLAN transport.
+            catTransport.value = RadioControlSettings.TRANSPORT_TCP
+            txAddress.value = "${value.host}:${value.controlPort}"
+            splitMode.value = true
+            tcpProtocol.value = RadioControlSettings.TCP_PROTOCOL_RAW_CAT
+            if (pttMethod == RadioPttMethod.USB_CAT) pttMethod = RadioPttMethod.CAT
+        } else if (wasWlanCat) {
+            catTransport.value = previousCatTransport
+            txAddress.value = txAddressByTransport[previousCatTransport].orEmpty()
+            txName.value = txNameByTransport[previousCatTransport].orEmpty()
+        }
+        showAudioSettings = false
+        audioEditorState.removeState(radioModel.value)
+    }
     rejectedDraft?.let { draft ->
         AlertDialog(
             onDismissRequest = { rejectedDraft = null },
@@ -1766,15 +1776,34 @@ fun RadioControlDialog(
             }
         )
     }
-    androidx.activity.compose.BackHandler(enabled = bluetoothTarget.isNotEmpty()) { bluetoothTarget = "" }
+    val subpageOpen = bluetoothTarget.isNotEmpty() || showAudioSettings
+    val backToCat = {
+        if (showAudioSettings) {
+            showAudioSettings = false
+            audioEditorState.removeState(radioModel.value)
+        } else bluetoothTarget = ""
+    }
+    androidx.activity.compose.BackHandler(enabled = subpageOpen, onBack = backToCat)
     SharedDialog(
-        title = stringResource(if (bluetoothTarget.isEmpty()) R.string.rc_settings_title else R.string.cat_pair_title),
-        onDismissRequest = { if (bluetoothTarget.isNotEmpty()) bluetoothTarget = "" else onDismiss() },
-        onCancel = { if (bluetoothTarget.isNotEmpty()) bluetoothTarget = "" else onDismiss() },
-        cancelText = stringResource(if (bluetoothTarget.isEmpty()) R.string.btn_cancel else R.string.cat_back),
-        onAccept = if (bluetoothTarget.isEmpty()) ({ connectAfterSave = false; onAccept() }) else null
+        title = stringResource(when {
+            showAudioSettings -> R.string.radio_audio_title
+            bluetoothTarget.isNotEmpty() -> R.string.cat_pair_title
+            else -> R.string.rc_settings_title
+        }),
+        onDismissRequest = { if (subpageOpen) backToCat() else onDismiss() },
+        onCancel = { if (subpageOpen) backToCat() else onDismiss() },
+        cancelText = stringResource(if (subpageOpen) R.string.cat_back else R.string.btn_cancel),
+        onAccept = if (!subpageOpen) ({ connectAfterSave = false; onAccept() }) else null
     ) { _ ->
-        if (bluetoothTarget.isNotEmpty()) {
+        if (showAudioSettings && radioAudioSession != null) {
+            audioEditorState.SaveableStateProvider(radioModel.value) {
+                com.rtbishop.look4sat.core.presentation.RadioAudioSettingsContent(
+                    audioSettings, radioModel.value, radioAudioSession, ::applyAudioSettings,
+                    Modifier.fillMaxHeight(.82f).verticalScroll(rememberScrollState()).padding(horizontal = padding),
+                    showTitle = false
+                )
+            }
+        } else if (bluetoothTarget.isNotEmpty()) {
             Box(Modifier.fillMaxHeight(0.82f)) {
                 RadioBluetoothPairing(if (bluetoothTarget == "rx" && separateRx) rxModel else radioModel.value) { address, name ->
                     if (bluetoothTarget == "tx") { txAddress.value = address; txName.value = name }
@@ -1891,7 +1920,7 @@ fun RadioControlDialog(
                     enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
                 if(frequencyLocked)Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
             }
-            if (!isL4s && !isN76) {
+            if (!audioSettings.networkCat && !isL4s && !isN76) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically,
@@ -1944,18 +1973,39 @@ fun RadioControlDialog(
             }
             if (catPage == 1) {
             Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
-            if(radioAudioSession!=null) OutlinedButton(onClick={ showAudioSettings=true },enabled=!frequencyLocked) {
+            if(radioAudioSession!=null) OutlinedButton(onClick={ showAudioSettings=true }) {
                 Text(stringResource(R.string.radio_audio_title))
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (radioModel.value == RadioControlSettings.MODEL_ICOM_IC705 && radioAudioSession != null) {
+                    FilterChip(
+                        selected = audioSettings.networkCat,
+                        onClick = {
+                            if (!audioSettings.networkCat) {
+                                previousCatTransport = catTransport.value
+                                txAddressByTransport[catTransport.value] = txAddress.value
+                                txNameByTransport[catTransport.value] = txName.value
+                            }
+                            applyAudioSettings(audioSettings.copy(
+                                backend = com.rtbishop.look4sat.core.domain.audio.RadioAudioBackend.ICOM_WLAN,
+                                networkCat = true))
+                            showAudioSettings = true
+                        },
+                        label = { Text(stringResource(R.string.cat_ic705_wlan), fontSize = 12.sp) },
+                        enabled = enabled.value
+                    )
+                }
                 radioControlTransports(radioModel.value).forEach { transport ->
                     FilterChip(
-                        selected = catTransport.value == transport,
+                        selected = catTransport.value == transport && !audioSettings.networkCat,
                         onClick = {
-                            txAddressByTransport[catTransport.value] = txAddress.value
-                            rxAddressByTransport[catTransport.value] = rxAddress.value
-                            txNameByTransport[catTransport.value] = txName.value
-                            rxNameByTransport[catTransport.value] = rxName.value
+                            if (!audioSettings.networkCat) {
+                                txAddressByTransport[catTransport.value] = txAddress.value
+                                rxAddressByTransport[catTransport.value] = rxAddress.value
+                                txNameByTransport[catTransport.value] = txName.value
+                                rxNameByTransport[catTransport.value] = rxName.value
+                            }
+                            audioSettings = audioSettings.copy(networkCat = false)
                             catTransport.value = transport
                             if (transport == RadioControlSettings.TRANSPORT_VOX) {
                                 pttMethod = RadioPttMethod.VOX
@@ -1979,7 +2029,7 @@ fun RadioControlDialog(
                     )
                 }
             }
-            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
+            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP && !audioSettings.networkCat) {
                 Text(stringResource(R.string.rc_tcp_protocol), fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RadioControlSettings.tcpProtocolsFor(radioModel.value).forEach { protocol ->
@@ -2052,7 +2102,9 @@ fun RadioControlDialog(
                 else -> R.string.rc_tx_radio
             })
             Text(txLabel, fontWeight = FontWeight.Medium)
-            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
+            if (audioSettings.networkCat) {
+                Text("${audioSettings.host}:${audioSettings.controlPort}")
+            } else if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
                 OutlinedTextField(
                     value = txAddress.value,
                     onValueChange = {
