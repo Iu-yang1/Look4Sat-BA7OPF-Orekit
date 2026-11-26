@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_density_title">Масштаб інтерфейсу (DPI)</string>
+    <string name="display_density_value">%1$d%% · %2$d DPI</string>
+    <string name="display_density_hint">Лише для цього застосунку. Системний розмір шрифту зберігається.</string>
+    <string name="display_density_reset">Як у системі</string>
+    <string name="rotator_page_connection">З’єднання</string>
+    <string name="rotator_page_pointing">Наведення</string>
+    <string name="rotator_page_parking">Паркування</string>
+    <string name="rotator_page_control">Керування</string>
+</resources>

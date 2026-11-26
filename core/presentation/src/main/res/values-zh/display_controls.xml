@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_density_title">界面缩放(DPI)</string>
+    <string name="display_density_value">%1$d%% · %2$d DPI</string>
+    <string name="display_density_hint">仅调整本应用界面,保留系统字体大小。</string>
+    <string name="display_density_reset">跟随系统</string>
+    <string name="rotator_page_connection">连接</string>
+    <string name="rotator_page_pointing">指向</string>
+    <string name="rotator_page_parking">停放</string>
+    <string name="rotator_page_control">控制</string>
+</resources>

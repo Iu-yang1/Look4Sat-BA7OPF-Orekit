@@ -342,6 +342,9 @@ class SettingsViewModel(
             is SettingsAction.SetPassListFontScale -> settingsRepo.updateOtherSettings {
                 it.copy(passListFontScale = action.value.coerceIn(0.6f, 1.4f))
             }
+            is SettingsAction.SetDisplayDensityScale -> settingsRepo.updateOtherSettings {
+                it.copy(displayDensityScale = com.rtbishop.look4sat.core.domain.model.DisplayDensity.normalize(action.value))
+            }
             is SettingsAction.SetTrajectoryPrecision -> settingsRepo.updateOtherSettings {
                 it.copy(trajectoryPrecision = action.value)
             }

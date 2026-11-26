@@ -186,6 +186,7 @@ class SettingsRepo(
     private val keyTiandituKey = "tiandituKey"
     private val keyBottomBarTool = "bottomBarTool"
     private val keyPassListFontScale = "passListFontScale"
+    private val keyDisplayDensityScale = "displayDensityScale"
     private val keyTrajectoryPrecision = "trajectoryPrecision"
     private val keyFt4OperatorCallsign = "ft4OperatorCallsign"
     private val keyFt4DecodeEnabled = "ft4DecodeEnabled"
@@ -1215,7 +1216,8 @@ class SettingsRepo(
                     mapSource = MapSource.normalize(it.mapSource),
                     tiandituKey = it.tiandituKey.trim(),
                     bottomBarTool = BottomBarTool.normalize(it.bottomBarTool),
-                    passListFontScale = it.passListFontScale.coerceIn(0.6f, 1.4f)
+                    passListFontScale = it.passListFontScale.coerceIn(0.6f, 1.4f),
+                    displayDensityScale = com.rtbishop.look4sat.core.domain.model.DisplayDensity.normalize(it.displayDensityScale)
                 )
             }
             preferences.edit {
@@ -1239,6 +1241,7 @@ class SettingsRepo(
                 putString(keyTiandituKey, new.tiandituKey)
                 putString(keyBottomBarTool, new.bottomBarTool)
                 putFloat(keyPassListFontScale, new.passListFontScale)
+                putFloat(keyDisplayDensityScale, new.displayDensityScale)
                 putString(keyTrajectoryPrecision, new.trajectoryPrecision.name)
             }
             new
@@ -1266,6 +1269,8 @@ class SettingsRepo(
         tiandituKey = preferences.getString(keyTiandituKey, null).orEmpty().trim(),
         bottomBarTool = BottomBarTool.normalize(preferences.getString(keyBottomBarTool, null).orEmpty()),
         passListFontScale = preferences.getFloat(keyPassListFontScale, 1f).coerceIn(0.6f, 1.4f),
+        displayDensityScale = com.rtbishop.look4sat.core.domain.model.DisplayDensity.normalize(
+            preferences.getFloat(keyDisplayDensityScale, 1f)),
         trajectoryPrecision = com.rtbishop.look4sat.core.domain.model.TrajectoryPrecision.fromStored(
             preferences.getString(keyTrajectoryPrecision, null))
     )

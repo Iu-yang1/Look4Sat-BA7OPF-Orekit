@@ -130,6 +130,7 @@ internal fun CwConsole(
     val values = CwTemplateValues(log.callsignInput, myCallsign, draft.sentReport, grid)
 
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         Box(Modifier.fillMaxSize()) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
@@ -311,6 +312,8 @@ internal fun CwConsole(
             syncError = error ?: remote?.error ?: control.errorMessage,
             onCancelSync = { onAction(RadarAction.CancelHandsetCwSync) },
             onApply = { onAction(RadarAction.SetNativeCwOptions(it)); showOptions = false })
+        }
+
         }
     }
 }

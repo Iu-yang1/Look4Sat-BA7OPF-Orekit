@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_density_title">අතුරුමුහුණත් පරිමාණය (DPI)</string>
+    <string name="display_density_value">%1$d%% · %2$d DPI</string>
+    <string name="display_density_hint">මෙම යෙදුමට පමණි. පද්ධති අකුරු ප්‍රමාණය පවත්වා ගනී.</string>
+    <string name="display_density_reset">පද්ධතිය අනුව</string>
+    <string name="rotator_page_connection">සම්බන්ධතාව</string>
+    <string name="rotator_page_pointing">දිශාව</string>
+    <string name="rotator_page_parking">නැවතුම</string>
+    <string name="rotator_page_control">පාලනය</string>
+</resources>

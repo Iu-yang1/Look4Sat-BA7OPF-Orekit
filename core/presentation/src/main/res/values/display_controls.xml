@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_density_title">Interface scale (DPI)</string>
+    <string name="display_density_value">%1$d%% · %2$d DPI</string>
+    <string name="display_density_hint">Applies only to this app. System font size is preserved.</string>
+    <string name="display_density_reset">Follow system</string>
+    <string name="rotator_page_connection">Connection</string>
+    <string name="rotator_page_pointing">Pointing</string>
+    <string name="rotator_page_parking">Parking</string>
+    <string name="rotator_page_control">Control</string>
+</resources>

@@ -106,6 +106,7 @@ internal fun RecordingPanel(satellite: String,passAos: Long?,providedRecorder: I
     val selectedSource=preferredRecordingSource(sources,selection,n76Connected)
     val displaySourceId=if(state.active) state.source?.id else selectedSource?.id
     ModalBottomSheet(onDismissRequest=onDismiss,shape=sheetDialogShape(),containerColor=sheetDialogContainerColor()) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         Column(Modifier.fillMaxWidth().heightIn(max=(LocalConfiguration.current.screenHeightDp*0.8f).dp)
             .verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Text(stringResource(R.string.recording_title),style=MaterialTheme.typography.titleLarge,color=MaterialTheme.colorScheme.primary)
@@ -150,6 +151,8 @@ internal fun RecordingPanel(satellite: String,passAos: Long?,providedRecorder: I
                 }
             }
             }
+        }
+
         }
     }
     deleting?.let {id -> AlertDialog(onDismissRequest={deleting=null},title={Text(stringResource(R.string.recording_delete))},

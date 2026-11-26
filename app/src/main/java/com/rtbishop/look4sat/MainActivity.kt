@@ -68,7 +68,9 @@ class MainActivity : ComponentActivity() {
                 val settingsRepo = (applicationContext as IContainerProvider).getMainContainer().settingsRepo
                 val otherSettings by settingsRepo.otherSettings.collectAsStateWithLifecycle()
                 // Light theme is opt-in: the app stays dark until the user turns it on.
-                MainTheme(isDarkTheme = !otherSettings.stateOfLightTheme) { NavRoot() }
+                com.rtbishop.look4sat.core.presentation.AppDisplayDensity(otherSettings.displayDensityScale) {
+                    MainTheme(isDarkTheme = !otherSettings.stateOfLightTheme) { NavRoot() }
+                }
             }
         }
     }

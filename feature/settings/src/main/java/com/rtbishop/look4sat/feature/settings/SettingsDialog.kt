@@ -41,6 +41,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
+import com.rtbishop.look4sat.core.presentation.SettingsSectionTabs
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -1256,6 +1257,7 @@ fun RadioControlDialog(
     val padding    = LocalSpacing.current.large
     val enabled    = rememberSaveable { mutableStateOf(initialSettings.enabled) }
     var catPage by rememberSaveable { mutableIntStateOf(0) }
+    val pageScrollStates = List(4) { rememberScrollState() }
     var modelSearch by rememberSaveable { mutableStateOf("") }
     var bluetoothTarget by rememberSaveable { mutableStateOf("") }
     var connectAfterSave by remember { mutableStateOf(false) }
@@ -1782,7 +1784,7 @@ fun RadioControlDialog(
                 }
             }
         } else Column(
-            modifier = Modifier.fillMaxHeight(0.82f).verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxHeight(0.82f)
                 .padding(horizontal = padding)
         ) {
             // Enable switch
@@ -1796,14 +1798,14 @@ fun RadioControlDialog(
             }
             Spacer(modifier = Modifier.height(6.dp))
 
-            Text(radioModel.value, style = MaterialTheme.typography.titleMedium)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(radioModel.value, style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+            SettingsSectionTabs(
                 listOf(R.string.cat_page_radio, R.string.cat_page_connection, R.string.cat_page_ptt, R.string.cat_page_advanced)
-                    .forEachIndexed { index, label ->
-                        FilterChip(selected = catPage == index, onClick = { catPage = index; selectingFor.value = "" },
-                            label = { Text(stringResource(label)) }, modifier = Modifier.heightIn(min = 48.dp))
-                    }
-            }
+                    .map { stringResource(it) }, catPage,
+                onSelect = { catPage = it; selectingFor.value = "" }
+            )
+            Column(Modifier.weight(1f).verticalScroll(pageScrollStates[catPage])) {
             if (catPage == 0) {
             // Radio model — FlowRow so chips wrap on small screens
             Text(
@@ -2480,6 +2482,7 @@ fun RadioControlDialog(
             Spacer(modifier = Modifier.height(6.dp))
             }
             Spacer(Modifier.height(24.dp))
+            }
         }
     }
     if (showN76Options) {

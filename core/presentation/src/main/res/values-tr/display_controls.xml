@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="display_density_title">Arayüz ölçeği (DPI)</string>
+    <string name="display_density_value">%1$d%% · %2$d DPI</string>
+    <string name="display_density_hint">Yalnızca bu uygulamayı etkiler. Sistem yazı boyutu korunur.</string>
+    <string name="display_density_reset">Sistemi izle</string>
+    <string name="rotator_page_connection">Bağlantı</string>
+    <string name="rotator_page_pointing">Yönlendirme</string>
+    <string name="rotator_page_parking">Park</string>
+    <string name="rotator_page_control">Kontrol</string>
+</resources>

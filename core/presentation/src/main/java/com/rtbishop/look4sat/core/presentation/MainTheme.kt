@@ -52,6 +52,7 @@ data object Spacing {
 
 @Composable
 fun MainTheme(isDarkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    HighRefreshRateWindow()
     val view = LocalView.current
     if (view.isInEditMode) {
         MaterialTheme(darkScheme, shapes, typography, content)

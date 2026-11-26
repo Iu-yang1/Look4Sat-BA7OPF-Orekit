@@ -1,5 +1,7 @@
 package com.rtbishop.look4sat.core.presentation
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,7 +29,7 @@ fun StartupLoadingStatus(localDataReady: Boolean = false) {
         contentAlignment = Alignment.Center
     ) {
         Column(
-            modifier = Modifier.widthIn(max = 360.dp),
+            modifier = Modifier.widthIn(max = 360.dp).animateContentSize(tween(160)),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             Icon(

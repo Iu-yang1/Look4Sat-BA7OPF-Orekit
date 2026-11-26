@@ -25,6 +25,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -69,6 +70,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -126,7 +128,7 @@ import com.rtbishop.look4sat.feature.settings.SettingsDestination
 import com.rtbishop.look4sat.feature.settings.LoTWUploadDestination
 import com.rtbishop.look4sat.feature.status.SatStatusDestination
 import com.rtbishop.look4sat.feature.sunlight.SunlightDestination
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun NavRoot(deeplink: String? = null) {
@@ -211,11 +213,11 @@ fun NavRoot(deeplink: String? = null) {
         }
     }
     // Incoming screen slides in from the right, outgoing drifts left at 1/3 speed (API35+ style)
-    val pushTransition = slideInHorizontally(tween(300)) { it } togetherWith
-        slideOutHorizontally(tween(300)) { -it / 3 }
+    val pushTransition = slideInHorizontally(tween(240)) { it } togetherWith
+        slideOutHorizontally(tween(240)) { -it / 3 }
     // Reverse: outgoing slides out to the right, incoming drifts in from the left
-    val popTransition = slideInHorizontally(tween(300)) { -it / 3 } togetherWith
-        slideOutHorizontally(tween(300)) { it }
+    val popTransition = slideInHorizontally(tween(240)) { -it / 3 } togetherWith
+        slideOutHorizontally(tween(240)) { it }
     CompositionLocalProvider(
         com.rtbishop.look4sat.core.presentation.LocalUtilityPanels provides
             com.rtbishop.look4sat.core.presentation.UtilityPanels(
@@ -535,7 +537,7 @@ fun MainScreen(
             onRequestedTabHandled()
         }
     }
-    val fadeTransition = fadeIn(animationSpec = tween(350)) togetherWith fadeOut(animationSpec = tween(350))
+    val fadeTransition = remember { fadeIn(animationSpec = tween(160)) togetherWith fadeOut(animationSpec = tween(160)) }
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
@@ -790,16 +792,16 @@ private fun MoreDestinationsSheet(
         mutableStateOf(BottomBarTool.normalize(currentTool))
     }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val menuTransition = updateTransition(showToolSettings, label = "moreMenuPage")
     var hasVisitedToolSettings by remember { mutableStateOf(false) }
     LaunchedEffect(showToolSettings) {
         if (showToolSettings) {
             hasVisitedToolSettings = true
             sheetState.expand()
         } else if (hasVisitedToolSettings) {
-            // Let the More menu slide back into place before shrinking the sheet;
-            // otherwise the old compact height can clip the destination list during
-            // the 220 ms page transition and make the other destinations appear gone.
-            delay(260)
+            // Wait for the real transition, including when system animations are disabled.
+            snapshotFlow { !menuTransition.isRunning && !menuTransition.currentState && !menuTransition.targetState }
+                .first { it }
             sheetState.partialExpand()
             hasVisitedToolSettings = false
         }
@@ -808,11 +810,11 @@ private fun MoreDestinationsSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         // Register from inside the sheet content so this handler takes precedence
         // over the sheet's own Back handler while the nested page is visible.
         BackHandler(enabled = showToolSettings) { showToolSettings = false }
-        AnimatedContent(
-            targetState = showToolSettings,
+        menuTransition.AnimatedContent(
             transitionSpec = {
                 if (targetState) {
                     (slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(220)) +
@@ -825,8 +827,7 @@ private fun MoreDestinationsSheet(
                         (slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(220)) +
                             fadeOut(animationSpec = tween(140)))
                 }
-            },
-            label = "moreMenuPageTransition"
+            }
         ) { showSettingsPage ->
         if (showSettingsPage) {
             Column(
@@ -958,6 +959,8 @@ private fun MoreDestinationsSheet(
                 Spacer(modifier = Modifier.size(16.dp))
             }
         }
+        }
+
         }
     }
 }

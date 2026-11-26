@@ -1334,6 +1334,7 @@ private fun ElevationSettingsDialog(
         parsed.distinct().size == parsed.size
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.fillMaxWidth(0.88f)
@@ -1408,6 +1409,8 @@ private fun ElevationSettingsDialog(
                 }
             }
         }
+
+        }
     }
 }
 
@@ -1437,6 +1440,7 @@ private fun WorkedGridQsoDialog(
     var callInput by remember { mutableStateOf("") }
     val uriHandler = LocalUriHandler.current
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         // Centered card, ~85% width, internal scroll for long lists.
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -1633,6 +1637,8 @@ private fun WorkedGridQsoDialog(
                 }
             }
         }
+
+        }
     }
     // Mark-a-station input dialog: enter a callsign as a reminder.
     if (showMarkInput) {
@@ -1695,6 +1701,7 @@ private fun RegionQsoDialog(
         else -> "${region.code} · "
     }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.fillMaxWidth(0.88f)
@@ -1795,6 +1802,8 @@ private fun RegionQsoDialog(
                 }
             }
         }
+
+        }
     }
 }
 
@@ -1814,6 +1823,7 @@ private fun WaipaUnassignedDialog(
     val useEnglish = androidx.compose.ui.platform.LocalConfiguration.current
         .locales[0].language != "zh"
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.fillMaxWidth(0.92f)
@@ -1889,6 +1899,8 @@ private fun WaipaUnassignedDialog(
                     }
                 }
             }
+        }
+
         }
     }
 }
@@ -2864,6 +2876,7 @@ private fun GridActivitySettingsDialog(
     val selectedAwardLabel = stringResource(awardOptions.first { it.first == award }.second)
     val uriHandler = LocalUriHandler.current
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        com.rtbishop.look4sat.core.presentation.AppDisplayWindow {
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
             modifier = Modifier.fillMaxWidth(0.88f)
@@ -3074,6 +3087,8 @@ private fun GridActivitySettingsDialog(
                     }
                 }
             }
+        }
+
         }
     }
 }

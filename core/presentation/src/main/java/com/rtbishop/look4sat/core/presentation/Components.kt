@@ -513,14 +513,16 @@ private fun DialogShell(
             shouldDismissOnClickOutside = dismissOnClickOutside
         )
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(padding),
-            modifier = Modifier
-                .fillMaxWidth()
-                .nestedScroll(stopSheetFling)
-        ) {
-            content(padding)
+        AppDisplayWindow {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(padding),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .nestedScroll(stopSheetFling)
+            ) {
+                content(padding)
+            }
         }
     }
 }

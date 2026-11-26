@@ -64,6 +64,7 @@ import com.rtbishop.look4sat.core.domain.rotator.RotatorCommandStatus
 import com.rtbishop.look4sat.core.domain.rotator.RotatorFeedbackStatus
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
+import com.rtbishop.look4sat.core.presentation.SettingsSectionTabs
 
 @Composable
 fun RotatorControlDialog(
@@ -79,7 +80,9 @@ fun RotatorControlDialog(
 ) {
     val context = LocalContext.current
     val usbManager = remember { context.getSystemService(Context.USB_SERVICE) as UsbManager }
-    var draft by remember { mutableStateOf(initialSettings) }
+    var draft by rememberSaveable(stateSaver = rotatorDraftSaver) { mutableStateOf(initialSettings) }
+    var page by rememberSaveable { mutableIntStateOf(0) }
+    val pageScrollStates = List(4) { rememberScrollState() }
     var usbRevision by remember { mutableIntStateOf(0) }
     var bluetoothRevision by remember { mutableIntStateOf(0) }
     var pendingUsbSelection by rememberSaveable(saver = pendingUsbSelectionSaver) {
@@ -87,8 +90,8 @@ fun RotatorControlDialog(
     }
     var usbPermissionDenied by remember { mutableStateOf(false) }
     var pendingNetworkConnect by remember { mutableStateOf(false) }
-    var testAzimuth by remember { mutableStateOf("180") }
-    var testElevation by remember { mutableStateOf("10") }
+    var testAzimuth by rememberSaveable { mutableStateOf("180") }
+    var testElevation by rememberSaveable { mutableStateOf("10") }
 
     val connected = trackingState.connectionState == RotatorConnectionState.CONNECTED
     val connecting = trackingState.connectionState == RotatorConnectionState.CONNECTING ||
@@ -236,7 +239,6 @@ fun RotatorControlDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(0.72f)
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = padding, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -247,6 +249,21 @@ fun RotatorControlDialog(
                     onCheckedChange = { draft = draft.copy(enabled = it) }
                 )
 
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(protocolLabel(draft.protocol), style = MaterialTheme.typography.titleMedium)
+                        Text(connectionStatus, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (connected) Button(onClick = onStop) { Text(stringResource(R.string.rotator_stop)) }
+                }
+                SettingsSectionTabs(
+                    listOf(R.string.rotator_page_connection, R.string.rotator_page_pointing,
+                        R.string.rotator_page_parking, R.string.rotator_page_control).map { stringResource(it) },
+                    page, onSelect = { page = it }
+                )
+                Column(Modifier.weight(1f).verticalScroll(pageScrollStates[page]),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (page == 0) {
                 Text(stringResource(R.string.rotator_protocol), fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RotatorProtocol.entries.forEach { protocol ->
@@ -390,6 +407,8 @@ fun RotatorControlDialog(
                     )
                 }
 
+                }
+                if (page == 1) {
                 Text(stringResource(R.string.rotator_pointing), fontWeight = FontWeight.Bold)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     RotatorAzimuthRange.entries.forEach { range ->
@@ -458,6 +477,8 @@ fun RotatorControlDialog(
                     editable
                 ) { draft = draft.copy(magneticCorrection = it) }
 
+                }
+                if (page == 2) {
                 Text(stringResource(R.string.rotator_park), fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RotatorNumberField(
@@ -484,6 +505,8 @@ fun RotatorControlDialog(
                     editable
                 ) { draft = draft.copy(parkOnDisconnect = it) }
 
+                }
+                if (page == 3) {
                 Text(
                     stringResource(
                         R.string.rotator_status,
@@ -565,9 +588,6 @@ fun RotatorControlDialog(
                     ) {
                         Text(stringResource(if (connected) R.string.rotator_disconnect else R.string.rotator_connect))
                     }
-                    Button(onClick = onStop, enabled = connected, modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.rotator_stop))
-                    }
                     Button(onClick = onPark, enabled = connected, modifier = Modifier.weight(1f)) {
                         Text(stringResource(R.string.rotator_park_now))
                     }
@@ -611,6 +631,8 @@ fun RotatorControlDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.rotator_test_point))
+                }
+                }
                 }
             }
     }

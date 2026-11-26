@@ -29,6 +29,16 @@ class RadioCatWorkbenchTest {
     private val initial = RadioControlSettings(true, RadioControlSettings.MODEL_ICOM_IC705,
         "00:11:22:33:44:55", "", "IC-705", "", 19200, splitMode = true)
 
+    @Test fun sectionHeadingKeepsSpaceBelowFixedTabs() {
+        compose.setContent { MainTheme { RadioControlDialog(initial, {}, {}) } }
+        val tab = compose.onNodeWithText("Radio", substring = false).getBoundsInRoot()
+        val heading = compose.onNodeWithText("Radio Model").getBoundsInRoot()
+        assertTrue("Section heading must not touch the tabs", heading.top.value - tab.bottom.value >= 16f)
+        compose.onNodeWithText("Connection").performClick()
+        compose.onNodeWithText("Radio", substring = false).assertIsDisplayed().performClick()
+        compose.onNodeWithText("Radio Model").assertIsDisplayed()
+    }
+
 
     @Test fun ic705PairingUsesSameSheetAndBackPreservesDraft() {
         val saved = mutableListOf<RadioControlSettings>()
@@ -49,9 +59,9 @@ class RadioCatWorkbenchTest {
         compose.setContent { MainTheme { RadioControlDialog(initial, {}, saved::add) } }
         compose.onNodeWithText("PTT").performClick()
         compose.onNodeWithText("Audio VOX").performScrollTo().performClick()
-        compose.onNodeWithText("Connection").performScrollTo().performClick()
-        compose.onNodeWithText("More parameters").performScrollTo().performClick()
-        compose.onNodeWithText("Radio", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Connection").assertIsDisplayed().performClick()
+        compose.onNodeWithText("More parameters").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Radio", substring = false).assertIsDisplayed().performClick()
         compose.onNodeWithText("Accept").performClick()
         compose.runOnIdle { assertEquals(RadioPttMethod.VOX, saved.single().pttMethod) }
     }

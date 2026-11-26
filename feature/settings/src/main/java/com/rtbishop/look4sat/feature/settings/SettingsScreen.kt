@@ -843,6 +843,22 @@ private fun DisplaySettingsCard(
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
+        var densityScale by remember(settings.displayDensityScale) { mutableFloatStateOf(settings.displayDensityScale) }
+        val systemDensity = androidx.compose.ui.platform.LocalDensity.current.density / settings.displayDensityScale
+        Text(stringResource(R.string.display_density_title), style = MaterialTheme.typography.titleSmall)
+        Text(stringResource(R.string.display_density_value, (densityScale * 100).roundToInt(),
+            (systemDensity * densityScale * 160).roundToInt()))
+        Text(stringResource(R.string.display_density_hint), style = MaterialTheme.typography.bodySmall)
+        Slider(
+            value = densityScale, onValueChange = { densityScale = it },
+            onValueChangeFinished = { onAction(SettingsAction.SetDisplayDensityScale(densityScale)) },
+            valueRange = com.rtbishop.look4sat.core.domain.model.DisplayDensity.MIN_SCALE..
+                com.rtbishop.look4sat.core.domain.model.DisplayDensity.MAX_SCALE
+        )
+        TextButton(onClick = { densityScale = 1f; onAction(SettingsAction.SetDisplayDensityScale(1f)) }) {
+            Text(stringResource(R.string.display_density_reset))
+        }
+        HorizontalDivider()
         Text(stringResource(R.string.prefs_display_font_size_title), style = MaterialTheme.typography.titleSmall)
         Text(
             stringResource(R.string.prefs_display_font_size_value, (value * 100f).roundToInt()),

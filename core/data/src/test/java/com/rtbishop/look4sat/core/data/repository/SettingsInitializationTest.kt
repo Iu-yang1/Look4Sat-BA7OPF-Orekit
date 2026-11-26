@@ -12,6 +12,17 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SettingsInitializationTest {
+    @Test fun displayScalePersistsAndNormalizesLegacyInvalidValues() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val preferences = context.getSharedPreferences("display-scale-test", Context.MODE_PRIVATE)
+        preferences.edit().clear().putFloat("displayDensityScale", Float.NaN).commit()
+        fun repository() = SettingsRepo(context.getSystemService(LocationManager::class.java), preferences, "test")
+        val repo = repository()
+        assertEquals(1f, repo.otherSettings.value.displayDensityScale)
+        repo.updateOtherSettings { it.copy(displayDensityScale = 1.2f) }
+        assertEquals(1.2f, repository().otherSettings.value.displayDensityScale)
+    }
+
     @Test fun formatMigrationInitializesItsKeyBeforeRunningAndDoesNotCreateNullKey() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val preferences = context.getSharedPreferences("format-migration-initialization", Context.MODE_PRIVATE)
