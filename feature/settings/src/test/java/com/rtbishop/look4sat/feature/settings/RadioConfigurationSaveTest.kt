@@ -43,11 +43,11 @@ class RadioConfigurationSaveTest {
         compose.runOnIdle { assertFalse(saved.single().enabled); assertTrue(dismissed) }
     }
 
-    @Test fun ic820AndLegacyYaesuExposeSingleRadioModeWithoutClaimingAutomaticSplitCapability() {
+    @Test fun ic820ShowsAutomaticMainSubSetupWithoutClaimingNativePtt() {
         show(initial.copy(enabled = true, radioModel = RadioControlSettings.MODEL_ICOM_IC820,
             catTransport = "USB", splitMode = true))
         compose.onNodeWithText("Single-radio control").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Preset the radio’s TX/RX mode on the radio. Software does not enable split or satellite mode.")
+        compose.onNodeWithText("Bands and modes are configured for the selected target.", substring = true)
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Satellite profiles").assertDoesNotExist()
     }

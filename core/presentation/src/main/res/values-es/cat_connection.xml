@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_page_radio">Radio</string>
+    <string name="cat_page_connection">Conexión</string>
+    <string name="cat_page_ptt">PTT</string>
+    <string name="cat_page_advanced">Más parámetros</string>
+    <string name="cat_model_search">Buscar modelos</string>
+    <string name="cat_connection_status">Conexión actual</string>
+    <string name="cat_connected">Conectado</string>
+    <string name="cat_disconnected">Desconectado</string>
+    <string name="cat_save_connect">Guardar y conectar</string>
+    <string name="cat_disconnect">Desconectar</string>
+    <string name="cat_back">Volver</string>
+    <string name="cat_pair_title">Emparejar Bluetooth</string>
+    <string name="cat_pair_permission">Permitir búsqueda Bluetooth</string>
+    <string name="cat_pair_enable">Activar Bluetooth</string>
+    <string name="cat_pair_search">Buscar dispositivos</string>
+    <string name="cat_pair_stop_search">Detener búsqueda</string>
+    <string name="cat_pair_system">Ajustes Bluetooth del sistema</string>
+    <string name="cat_pair_confirm">Confirme el emparejamiento en el teléfono y la radio.</string>
+    <string name="cat_pair_failed">Error de emparejamiento o búsqueda. Revise los permisos y el modo de emparejamiento e inténtelo de nuevo.</string>
+    <string name="cat_pair_empty">Sin dispositivos. Active el modo de emparejamiento de la radio o adaptador y busque de nuevo.</string>
+    <string name="cat_pair_bonded">Emparejado</string>
+    <string name="cat_pair_bonding">Emparejando…</string>
+    <string name="cat_pair_unpaired">Sin emparejar</string>
+    <string name="cat_pair_use">Usar dispositivo</string>
+    <string name="cat_pair_action">Emparejar dispositivo</string>
+    <string name="cat_pair_generic">Active el modo de emparejamiento de la radio o adaptador serie Bluetooth. Seleccione la conexión de datos y confirme el diálogo del sistema.</string>
+    <string name="cat_pair_ic705">En IC-705, abra SET &gt; Bluetooth Set, active Bluetooth y seleccione &lt;&lt;Pairing Reception&gt;&gt;. Busque ICOM BT(IC-705) y confirme el mismo código en ambos dispositivos. Si pide PIN, use el configurado en la radio (0000 por defecto). Cierre otras aplicaciones CAT antes de conectar.</string>
+    <string name="cat_pair_ftx1">Active el emparejamiento del cable serie Bluetooth-CAT y seleccione ese adaptador. El Bluetooth de audio del FTX-1 no ofrece CAT. Confirme el PIN indicado por el fabricante del cable.</string>
+</resources>

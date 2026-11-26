@@ -185,6 +185,8 @@ sealed interface SettingsAction {
     // Remote control
     data class UpdateRC(val settings: RCSettings) : SettingsAction
     data class UpdateRadioControl(val settings: RadioControlSettings) : SettingsAction
+    data class ConnectRadio(val settings: RadioControlSettings) : SettingsAction
+    data object DisconnectRadio : SettingsAction
     data class UpdateRotatorControl(val settings: RotatorSettings) : SettingsAction
     data object ConnectRotator : SettingsAction
     data object DisconnectRotator : SettingsAction

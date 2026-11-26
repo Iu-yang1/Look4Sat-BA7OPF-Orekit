@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_page_radio">Radio</string>
+    <string name="cat_page_connection">Connection</string>
+    <string name="cat_page_ptt">PTT</string>
+    <string name="cat_page_advanced">More parameters</string>
+    <string name="cat_model_search">Search radio models</string>
+    <string name="cat_connection_status">Current connection</string>
+    <string name="cat_connected">Connected</string>
+    <string name="cat_disconnected">Disconnected</string>
+    <string name="cat_save_connect">Save and connect</string>
+    <string name="cat_disconnect">Disconnect</string>
+    <string name="cat_back">Back</string>
+    <string name="cat_pair_title">Bluetooth pairing</string>
+    <string name="cat_pair_permission">Allow Bluetooth discovery</string>
+    <string name="cat_pair_enable">Turn on Bluetooth</string>
+    <string name="cat_pair_search">Search devices</string>
+    <string name="cat_pair_stop_search">Stop searching</string>
+    <string name="cat_pair_system">System Bluetooth settings</string>
+    <string name="cat_pair_confirm">Confirm the pairing request on the phone and radio.</string>
+    <string name="cat_pair_failed">Pairing or discovery failed. Check permissions and pairing mode, then retry.</string>
+    <string name="cat_pair_empty">No devices found. Put the radio or serial adapter into pairing mode, then search.</string>
+    <string name="cat_pair_bonded">Paired</string>
+    <string name="cat_pair_bonding">Pairing…</string>
+    <string name="cat_pair_unpaired">Not paired</string>
+    <string name="cat_pair_use">Use device</string>
+    <string name="cat_pair_action">Pair device</string>
+    <string name="cat_pair_generic">Put the radio or Bluetooth serial adapter into pairing mode. Choose its data connection, then confirm the system pairing dialog.</string>
+    <string name="cat_pair_ic705">On IC-705, open SET &gt; Bluetooth Set, turn Bluetooth on, then select &lt;&lt;Pairing Reception&gt;&gt;. Search below and pair with ICOM BT(IC-705). Confirm the matching passkey on both devices. If a PIN is requested, use the radio’s configured PIN (default 0000). Close other CAT apps before connecting.</string>
+    <string name="cat_pair_ftx1">Put the Bluetooth serial-to-CAT cable into pairing mode and select that adapter below. The FTX-1 Bluetooth audio connection does not provide CAT. Confirm the PIN supplied with your serial cable.</string>
+</resources>

@@ -155,8 +155,8 @@ internal class KenwoodController(
         if (!isConnected || hz <= 0) return false
         if (model.handheld) {
             val mode = bandBMode ?: readMode() ?: return false
-            val step = if (mode in setOf("USB", "LSB", "CW", "AM")) 20 else 5_000
-            val target = ((hz + step / 2) / step) * step
+            bandBMode = mode
+            val target = quantizeTrackingFrequency(hz)
             return target < 10_000_000_000L && link.write("FQ 1,${target.toString().padStart(10, '0')}") &&
                 readRawFrequency(rx) == target
         }
@@ -165,6 +165,12 @@ internal class KenwoodController(
         if (raw !in 1L..99_999_999_999L) return false
         if (!link.write(prefix(rx) + raw.toString().padStart(11, '0'))) return false
         return readRawFrequency(rx) == raw
+    }
+
+    override fun quantizeTrackingFrequency(frequencyHz: Long): Long {
+        if (!model.handheld) return frequencyHz
+        val step = if (bandBMode in setOf("USB", "LSB", "CW", "AM")) 20L else 5_000L
+        return ((frequencyHz + step / 2) / step) * step
     }
 
     override suspend fun setMode(mode: String): Boolean {
@@ -199,7 +205,9 @@ internal class KenwoodController(
             model.modernHf -> link.query("OM0", "OM0")?.getOrNull(3)
             else -> link.query("MD", "MD")?.getOrNull(2)
         } ?: return null
-        return (if (model.handheld) handheldModes else modes + dataModes)[code]
+        return (if (model.handheld) handheldModes else modes + dataModes)[code].also {
+            if (model.handheld && it != null) bandBMode = it
+        }
     }
 
     private suspend fun readTransverter(): Boolean {

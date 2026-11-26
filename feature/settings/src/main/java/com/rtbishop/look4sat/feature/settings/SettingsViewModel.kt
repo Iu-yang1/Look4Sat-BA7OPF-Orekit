@@ -378,6 +378,11 @@ class SettingsViewModel(
             is SettingsAction.UpdateRadioControl -> viewModelScope.launch {
                 if(!radioTrackingService.applyRadioControlSettings(action.settings))showToast("Stop transmitting before changing CAT settings")
             }
+            is SettingsAction.ConnectRadio -> viewModelScope.launch {
+                if (radioTrackingService.applyRadioControlSettings(action.settings)) radioTrackingService.connectRadios()
+                else showToast("Stop transmitting before changing CAT settings")
+            }
+            SettingsAction.DisconnectRadio -> viewModelScope.launch { radioTrackingService.disconnectRadios() }
             is SettingsAction.UpdateRotatorControl -> settingsRepo.updateRotatorSettings(action.settings)
             SettingsAction.ConnectRotator -> viewModelScope.launch { rotatorTrackingService.connect() }
             SettingsAction.DisconnectRotator -> viewModelScope.launch {

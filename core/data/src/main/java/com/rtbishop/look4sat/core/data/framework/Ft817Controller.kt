@@ -54,8 +54,12 @@ class Ft817Controller(
     private var transactionId = 0L
     private val recentTransactions = ArrayDeque<String>()
     override val supportsAtomicPair get() = variant == YaesuCatVariant.FT817
+    override fun quantizeTrackingFrequency(frequencyHz: Long) = Ft817CatProtocol.quantizeFrequencyHz(frequencyHz)
     // Capture the operator's selected receive VFO; never infer its identity from frequency.
     private var presetRxVfoA: Boolean? = null
+    private var originalSplit: Boolean? = null
+    private var originalDigitalMode: Int? = null
+    private var appliedDigitalMode: Int? = null
 
     @Volatile private var connected = false
     override var isConnected: Boolean
@@ -70,6 +74,9 @@ class Ft817Controller(
             transactionId = 0L
             recentTransactions.clear()
             presetRxVfoA = null
+            originalSplit = null
+            originalDigitalMode = null
+            appliedDigitalMode = null
             isConnected = transport.connect()
             if (isConnected && readFrequencyAndMode() == null) {
                 transport.disconnect()
@@ -92,7 +99,12 @@ class Ft817Controller(
 
     override suspend fun disconnect(): Unit = withContext(Dispatchers.IO + NonCancellable) {
         try {
-            if (isConnected) withTimeoutOrNull(PTT_OFF_TIMEOUT_MS) { pttOff() }
+            if (isConnected) withTimeoutOrNull(PTT_OFF_TIMEOUT_MS) {
+                if (pttOff()) {
+                    ioMutex.withLock { restoreDigitalModeLocked() }
+                    originalSplit?.let { setSplitMode(it) }
+                }
+            }
             transport.disconnect()
         } catch (e: Exception) {
             Log.e(tag, "Disconnect error: ${e.message}")
@@ -105,7 +117,7 @@ class Ft817Controller(
 
     override suspend fun setFrequency(frequencyHz: Long): Boolean = withContext(Dispatchers.IO) {
         ioMutex.withLock {
-            setFrequencyLocked(frequencyHz)
+            setFrequencyLocked(frequencyHz) && readFrequencyLocked()?.first == quantizeTrackingFrequency(frequencyHz)
         }
     }
 
@@ -166,6 +178,7 @@ class Ft817Controller(
         ioMutex.withLock {
             if (!supportsAtomicPair || readPttLocked() != false) return@withLock false
             val current = readSplitLocked() ?: return@withLock false
+            if (originalSplit == null) originalSplit = current
             if (current == enabled) return@withLock true
             if (!sendCommandWithAck(Ft817CatProtocol.buildSplitCommand(enabled))) return@withLock false
             delay(FT817_FREQUENCY_SETTLE_MS)
@@ -311,7 +324,7 @@ class Ft817Controller(
                     suspend fun modeOn(vfo: Boolean, mode: String?): Boolean {
                         if (mode == null) return true
                         val command = Ft817CatProtocol.buildSetModeCommand(mode) ?: return false
-                        return selectVfoLocked(vfo) && sendCommandWithAck(command)
+                        return selectVfoLocked(vfo) && setModeAndConfirmLocked(command)
                     }
                     modeOn(rxA, rxMode) && modeOn(!rxA, txMode)
                 } == true
@@ -335,12 +348,56 @@ class Ft817Controller(
             baseMode.equals("FM", true) || baseMode.equals("FM-N", true)
         ) "PKT" else "DIG"
         val command = Ft817CatProtocol.buildSetModeCommand(target) ?: return false
-        return accessLeg(true) { sendCommandWithAck(command) } == true
+        return accessLeg(true) {
+            setModeAndConfirmLocked(command) && (!enabled || target != "DIG" || configureDigitalModeLocked(baseMode))
+        } == true
+    }
+
+    private suspend fun configureDigitalModeLocked(baseMode: String): Boolean {
+        val target = when (baseMode.uppercase(java.util.Locale.US)) {
+            "USB" -> 4 // USER-U
+            "LSB" -> 3 // USER-L
+            else -> return false
+        }
+        val current = readEepromLocked(Ft817CatProtocol.DIGITAL_MODE_ADDRESS) ?: return false
+        val before = (current[0].toInt() and 0xE0) ushr 5
+        if (before == target) return true
+        if (before !in 0..4) return false
+        if (originalDigitalMode == null) originalDigitalMode = before
+        appliedDigitalMode = target
+        return writeDigitalModeLocked(current, target)
+    }
+
+    private suspend fun writeDigitalModeLocked(current: ByteArray, target: Int): Boolean {
+        val command = Ft817CatProtocol.buildDigitalModeCommand(current, target)
+        // EEPROM writes have no ACK. Confirm both bytes; byte 0x66 is DCS INV.
+        if (!sendCommand(command)) return false
+        delay(FT817_FREQUENCY_SETTLE_MS)
+        return readEepromLocked(Ft817CatProtocol.DIGITAL_MODE_ADDRESS)
+            ?.contentEquals(command.copyOfRange(2, 4)) == true
+    }
+
+    private suspend fun restoreDigitalModeLocked() {
+        val original = originalDigitalMode ?: return
+        if (readPttLocked() != false) return
+        val current = readEepromLocked(Ft817CatProtocol.DIGITAL_MODE_ADDRESS) ?: return
+        // Retain a later menu change made by the operator.
+        if ((current[0].toInt() and 0xE0) ushr 5 != appliedDigitalMode) return
+        if (!writeDigitalModeLocked(current, original)) catFailure("data-mode", "Original DIG MODE was not restored")
     }
 
     override suspend fun setMode(mode: String): Boolean = withContext(Dispatchers.IO) {
         val cmd = Ft817CatProtocol.buildSetModeCommand(mode) ?: return@withContext false
-        ioMutex.withLock { sendCommandWithAck(cmd) }
+        ioMutex.withLock { setModeAndConfirmLocked(cmd) }
+    }
+
+    private suspend fun setModeAndConfirmLocked(command: ByteArray): Boolean {
+        if (!sendCommandWithAck(command)) return false
+        delay(FT817_FREQUENCY_SETTLE_MS)
+        val actual = readFrequencyLocked()?.second ?: return false
+        // Frequency/mode readback exposes the base mode, not a separate narrow-filter state.
+        val actualCode = Ft817CatProtocol.buildSetModeCommand(actual)?.firstOrNull() ?: return false
+        return actualCode.toInt() and 0x7F == command[0].toInt() and 0x7F
     }
 
     override suspend fun setDataMode(enabled: Boolean, baseMode: String): Boolean {
@@ -353,7 +410,11 @@ class Ft817Controller(
         } else {
             baseMode
         }
-        return setMode(target)
+        if (variant != YaesuCatVariant.FT817 || !enabled || target != "DIG") return setMode(target)
+        val command = Ft817CatProtocol.buildSetModeCommand(target) ?: return false
+        return withContext(Dispatchers.IO) {
+            ioMutex.withLock { setModeAndConfirmLocked(command) && configureDigitalModeLocked(baseMode) }
+        }
     }
 
     override suspend fun setCtcssMode(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
@@ -485,15 +546,10 @@ class Ft817Controller(
         } else {
             Ft817CatProtocol.buildPttOffCommand()
         }
-        if (variant == YaesuCatVariant.FT857) {
-            val sent = sendCommandWithAck(command)
-            if (sent && !enabled) delay(FT857_PTT_OFF_SETTLE_MS)
-            return sent
-        }
-
         val attempts = if (enabled) 1 else pttRetries + 1
         repeat(attempts) { attempt ->
             if (!sendCommandWithAck(command)) return false
+            if (variant == YaesuCatVariant.FT857 && !enabled) delay(FT857_PTT_OFF_SETTLE_MS)
             if (readPttLocked() == enabled) return true
             if (attempt + 1 < attempts) delay(FT817_PTT_RETRY_DELAY_MS)
         }

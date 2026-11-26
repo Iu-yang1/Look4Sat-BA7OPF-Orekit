@@ -38,6 +38,14 @@ object Ft817CatProtocol {
     // Hamlib rigs/yaesu/ft817.c: get_vfo and get_split_vfo.
     const val VFO_STATE_ADDRESS = 0x0055
     const val SPLIT_STATE_ADDRESS = 0x007A
+    // FT-817 Menu 26, also used by Hamlib's ft817_set_mode for PKTUSB/PKTLSB.
+    const val DIGITAL_MODE_ADDRESS = 0x0065
+
+    fun buildDigitalModeCommand(current: ByteArray, mode: Int): ByteArray {
+        require(current.size == 2 && mode in 0..4)
+        return byteArrayOf(0, 0x65,
+            ((current[0].toInt() and 0x1F) or (mode shl 5)).toByte(), current[1], 0xBC.toByte())
+    }
 
     fun buildVfoToggleCommand() = byteArrayOf(0, 0, 0, 0, CMD_VFO_TOGGLE)
     fun buildSplitCommand(enabled: Boolean) =

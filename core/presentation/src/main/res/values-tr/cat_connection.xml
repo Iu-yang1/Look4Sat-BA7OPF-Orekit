@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_page_radio">Telsiz</string>
+    <string name="cat_page_connection">Bağlantı</string>
+    <string name="cat_page_ptt">PTT</string>
+    <string name="cat_page_advanced">Diğer parametreler</string>
+    <string name="cat_model_search">Telsiz modeli ara</string>
+    <string name="cat_connection_status">Geçerli bağlantı</string>
+    <string name="cat_connected">Bağlı</string>
+    <string name="cat_disconnected">Bağlı değil</string>
+    <string name="cat_save_connect">Kaydet ve bağlan</string>
+    <string name="cat_disconnect">Bağlantıyı kes</string>
+    <string name="cat_back">Geri</string>
+    <string name="cat_pair_title">Bluetooth eşleştirme</string>
+    <string name="cat_pair_permission">Bluetooth aramasına izin ver</string>
+    <string name="cat_pair_enable">Bluetooth aç</string>
+    <string name="cat_pair_search">Cihaz ara</string>
+    <string name="cat_pair_stop_search">Aramayı durdur</string>
+    <string name="cat_pair_system">Sistem Bluetooth ayarları</string>
+    <string name="cat_pair_confirm">Telefonda ve telsizde eşleştirmeyi onaylayın.</string>
+    <string name="cat_pair_failed">Eşleştirme veya arama başarısız. İzinleri ve eşleştirme modunu kontrol edip yeniden deneyin.</string>
+    <string name="cat_pair_empty">Cihaz bulunamadı. Telsizi veya adaptörü eşleştirme moduna alıp arayın.</string>
+    <string name="cat_pair_bonded">Eşleştirildi</string>
+    <string name="cat_pair_bonding">Eşleştiriliyor…</string>
+    <string name="cat_pair_unpaired">Eşleştirilmedi</string>
+    <string name="cat_pair_use">Cihazı kullan</string>
+    <string name="cat_pair_action">Cihazı eşleştir</string>
+    <string name="cat_pair_generic">Telsizi veya Bluetooth seri adaptörünü eşleştirme moduna alın. Veri bağlantısını seçip sistem isteğini onaylayın.</string>
+    <string name="cat_pair_ic705">IC-705 üzerinde SET &gt; Bluetooth Set bölümünde Bluetooth açın ve &lt;&lt;Pairing Reception&gt;&gt; seçin. ICOM BT(IC-705) arayın ve iki cihazda aynı kodu onaylayın. PIN istenirse telsizin PIN kodunu kullanın (varsayılan 0000). Diğer CAT uygulamalarını kapatın.</string>
+    <string name="cat_pair_ftx1">Bluetooth-CAT seri kablosunu eşleştirme moduna alın ve adaptörü seçin. FTX-1 Bluetooth ses bağlantısı CAT sağlamaz. Kablonun PIN kodunu kullanın.</string>
+</resources>

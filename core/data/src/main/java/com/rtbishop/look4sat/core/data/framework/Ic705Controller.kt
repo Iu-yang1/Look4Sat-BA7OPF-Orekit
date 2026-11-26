@@ -1537,7 +1537,7 @@ class Ic705Controller(
 
     private fun buildModelModeCommand(mode: String): ByteArray? {
         val command=IcomCivProtocol.buildSetModeCommand(mode) ?: return null
-        return if(variant==IcomCivVariant.IC820 && normalizedMode(mode)=="CW")
+        return if(variant in setOf(IcomCivVariant.IC820, IcomCivVariant.IC821) && normalizedMode(mode)=="CW")
             command.dropLast(1).toByteArray()+byteArrayOf(0x01,IcomCivProtocol.END_OF_MSG) else command
     }
 

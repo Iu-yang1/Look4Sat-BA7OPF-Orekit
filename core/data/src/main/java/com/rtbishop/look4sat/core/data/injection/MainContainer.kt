@@ -243,10 +243,7 @@ class MainContainer(
             settingsRepo,
             disciplinedClock,
             transportFactory = { type,address,baud,stopBits ->
-                if(settingsRepo.radioControlSettings.value.radioAudio.networkCat &&
-                    settingsRepo.radioControlSettings.value.radioModel==com.rtbishop.look4sat.core.domain.model.RadioControlSettings.MODEL_ICOM_IC705)
-                    radioAudioSession.transport()
-                else transportFactory.create(type,address,baud,stopBits)
+                transportFactory.create(type,address,baud,stopBits)
             },
             diagnostics = controlDiagnostics,
             n76AudioFactory = { address -> com.rtbishop.look4sat.core.data.framework.N76AudioSession(
@@ -256,7 +253,8 @@ class MainContainer(
                 appScope, controlDiagnostics, receivePcm=n76ReceivePcm::offer,receiveDiscontinuity=n76ReceivePcm::discontinuity)
             },
             // The unified foreground recorder is the only production recording owner.
-            n76RecordingFactory = null
+            n76RecordingFactory = null,
+            wlanCatTransportFactory = { radioAudioSession.transport() }
         )
     }
     override val radioTrackingService: IRadioTrackingService by lazy { sharedRadioTrackingService }

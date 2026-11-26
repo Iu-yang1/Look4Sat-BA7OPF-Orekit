@@ -89,7 +89,8 @@ class RadioTrackingService(
     private val transportFactory: ((String, String, Int, Int) -> RadioTransport)? = null,
     private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
     private val n76AudioFactory: ((String) -> N76Audio)? = null,
-    private val n76RecordingFactory: (() -> N76Recording)? = null
+    private val n76RecordingFactory: (() -> N76Recording)? = null,
+    private val wlanCatTransportFactory: (() -> RadioTransport)? = null
 ) : IRadioTrackingService, IFt4TransmitCoordinator {
 
     private val tag = "RadioTracking"
@@ -543,7 +544,10 @@ class RadioTrackingService(
             (settings.tcpProtocol == RadioControlSettings.TCP_PROTOCOL_HAMLIB || profile.isSdr)
         val dedicatedSatelliteMode = !usesHamlib && settings.splitMode && usesSatelliteLayout(profile, settings)
         val injected = controllerFactory?.invoke(profile.isIcom, address)
-        val transport = (sharedTransport ?: if (injected == null) {
+        val transport = (sharedTransport ?: if (injected == null && isTx && settings.radioAudio.networkCat &&
+                profile.icomVariant == IcomCivVariant.IC705) {
+            wlanCatTransportFactory?.invoke()
+        } else if (injected == null) {
             transportFactory?.invoke(
                 settings.catTransport,
                 address,
@@ -581,7 +585,7 @@ class RadioTrackingService(
                 useLanLogin = settings.catTransport == RadioControlSettings.TRANSPORT_TCP &&
                     settings.tcpProtocol == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN,
                 login = settings.lanLogin)
-        } else if (profile.isFlex) {
+        } else if (!usesHamlib && profile.isFlex) {
             FlexRadioController(checkNotNull(transport) { "SmartSDR TCP transport is unavailable" })
         } else if (usesHamlib) {
             HamlibRigctldController(
@@ -641,7 +645,19 @@ class RadioTrackingService(
             profile.supportsSatelliteMode && settings.duplexMode == RadioControlSettings.DUPLEX_MODE_SATELLITE
 
     private suspend fun connectController(controller: IRadioController, leg: String): Boolean = try {
-        controller.connect()
+        if (!controller.connect()) false else {
+            val settings = settingsRepo.radioControlSettings.value
+            val profile = radioProfile(settings.radioModel)
+            val automaticLayout = _state.value.splitMode && !profile.isL4s && !profile.isN76 &&
+                profile.icomVariant !in setOf(IcomCivVariant.IC820, IcomCivVariant.IC821) &&
+                (profile.capabilities.singleRadioSplit || profile.yaesuVariant == YaesuCatVariant.FT817)
+            val selected = _state.value.selectedTransponder
+            if (automaticLayout && selected != null && !controller.setSplitMode(selected.uplinkLow != null)) {
+                diagnose("connect/setup", "Split/SAT initialization was not confirmed", ControlDiagnosticSeverity.ERROR)
+                withContext(NonCancellable) { controller.disconnect() }
+                false
+            } else true
+        }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
@@ -967,13 +983,11 @@ class RadioTrackingService(
                 !_state.value.splitMode && receiver.catTransport == RadioControlSettings.TRANSPORT_USB
             }
         )
-        if (catPorts.mapNotNull(::parseUsbSerialSelector).any {
-            it.deviceId == endpoint.deviceId &&
-                (it.controlInterfaceId == endpoint.controlInterfaceId || it.dataInterfaceId == endpoint.dataInterfaceId)
-        }) return false
         val port = usbPttTransport ?: transportFactory?.invoke(
             RadioControlSettings.TRANSPORT_USB, settings.ptt.usbAddress, 9_600, 1
         ) ?: return false
+        if (catPorts.any { address -> port.sharesUsbPortWith(address) ||
+                parseUsbSerialSelector(address)?.let { usbSelectorsOverlap(it, endpoint) } == true }) return false
         if (!port.reserveUsbPtt(settings.ptt.line, settings.ptt.activeHigh)) return false
         if (!commandActor.execute { port.connect() }) return false
         usbPttTransport = port
@@ -1686,7 +1700,10 @@ class RadioTrackingService(
         val radio = txController
             ?: return failTrackingInitialization("TX radio is not connected")
         if (!radio.isConnected) return failTrackingInitialization("TX radio is not connected")
-        if (!radioProfile(settingsRepo.radioControlSettings.value.radioModel).capabilities.singleRadioSplit) {
+        val connection = settingsRepo.radioControlSettings.value
+        val nativeFt817 = connection.radioModel == RadioControlSettings.MODEL_YAESU_FT817 &&
+            !(connection.catTransport == RadioControlSettings.TRANSPORT_TCP && connection.tcpProtocol == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
+        if (nativeFt817 || !radioProfile(connection.radioModel).capabilities.singleRadioSplit) {
             runPresetSingleTracking(transponder, initialTxBaseFreqHz)
             return
         }
@@ -1840,6 +1857,17 @@ class RadioTrackingService(
             }
             val txMode = controlUplinkMode(transponder)
             val rxMode = controlDownlinkMode(transponder, txMode)
+            if (nativeYaesu) {
+                if (!radio.setSplitMode(txBase != null) || !radio.setSplitModes(rxMode, txMode.takeIf { txBase != null })) {
+                    return failTrackingInitialization("Yaesu SPLIT and RX/TX modes were not confirmed")
+                }
+                if (txBase != null && !radio.configureTxCtcss(_state.value.ctcssTone.takeIf { txMode.isFmMode() })) {
+                    return failTrackingInitialization("Yaesu TX tone setup was not acknowledged")
+                }
+                if (rxBase != null && radio.setTrackingFrequencies(rxBase, txBase) != FrequencyPairResult.APPLIED) {
+                    return failTrackingInitialization("Yaesu initial frequency pair was not confirmed")
+                }
+            }
             // IC-820 MAIN can initially be VHF or UHF. Align physical roles
             // before assigning modes: SATL MAIN transmits, SUB receives.
             // Leave SATL-N/REV choice under the operator's control.
@@ -2085,7 +2113,10 @@ class RadioTrackingService(
                         if (txWriteAllowed && tx?.isConnected == true && desiredTx != null &&
                             (budget == null && controlSettings.radioModel != RadioControlSettings.MODEL_ICOM_IC705 || desiredTx != lastSetTx)) {
                             val ok = if (split) tx.setTxVfoFrequency(desiredTx) else tx.setFrequency(desiredTx)
-                            if (ok) { lastSetTx = desiredTx; observedTx = desiredTx; wroteTx = true }
+                            if (ok) {
+                                val actual = tx.quantizeTrackingFrequency(desiredTx)
+                                lastSetTx = actual; observedTx = actual; wroteTx = true
+                            }
                             else failTrackingCommand("TX frequency was not acknowledged")
                         }
                         if (rx?.isConnected == true && rx.supportsFrequencyControl && desiredRx != null &&
@@ -2094,7 +2125,10 @@ class RadioTrackingService(
                                 delay(controlSettings.sharedBusCommandDelayMillis)
                             }
                             val ok = if (split) rx.setWorkingFrequency(desiredRx) else rx.setFrequency(desiredRx)
-                            if (ok) { lastSetRx = desiredRx; observedRx = desiredRx }
+                            if (ok) {
+                                val actual = rx.quantizeTrackingFrequency(desiredRx)
+                                lastSetRx = actual; observedRx = actual
+                            }
                             else failTrackingCommand("RX frequency was not acknowledged")
                         }
                         }

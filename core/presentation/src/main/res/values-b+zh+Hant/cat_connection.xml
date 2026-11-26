@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_page_radio">電臺</string>
+    <string name="cat_page_connection">連線</string>
+    <string name="cat_page_ptt">PTT</string>
+    <string name="cat_page_advanced">更多參數</string>
+    <string name="cat_model_search">搜尋電臺型號</string>
+    <string name="cat_connection_status">目前連線</string>
+    <string name="cat_connected">已連線</string>
+    <string name="cat_disconnected">未連線</string>
+    <string name="cat_save_connect">儲存並連線</string>
+    <string name="cat_disconnect">中斷連線</string>
+    <string name="cat_back">返回</string>
+    <string name="cat_pair_title">藍牙配對</string>
+    <string name="cat_pair_permission">允許藍牙搜尋</string>
+    <string name="cat_pair_enable">開啟藍牙</string>
+    <string name="cat_pair_search">搜尋裝置</string>
+    <string name="cat_pair_stop_search">停止搜尋</string>
+    <string name="cat_pair_system">系統藍牙設定</string>
+    <string name="cat_pair_confirm">請在手機和電臺上確認配對要求。</string>
+    <string name="cat_pair_failed">配對或搜尋失敗，請檢查權限和裝置配對模式後重試。</string>
+    <string name="cat_pair_empty">未發現裝置。請讓電臺或串口轉接器進入配對模式後搜尋。</string>
+    <string name="cat_pair_bonded">已配對</string>
+    <string name="cat_pair_bonding">正在配對…</string>
+    <string name="cat_pair_unpaired">未配對</string>
+    <string name="cat_pair_use">使用此裝置</string>
+    <string name="cat_pair_action">配對裝置</string>
+    <string name="cat_pair_generic">請讓電臺或藍牙串口轉接器進入配對模式，選擇資料連線，並確認系統配對對話框。</string>
+    <string name="cat_pair_ic705">在 IC-705 開啟 SET &gt; Bluetooth Set，開啟藍牙並選擇 &lt;&lt;Pairing Reception&gt;&gt;。在下方搜尋並配對 ICOM BT(IC-705)，在兩端確認相同的配對碼。若要求 PIN，使用電臺設定的 PIN（預設 0000）。連線前請關閉其他 CAT 軟體。</string>
+    <string name="cat_pair_ftx1">請讓藍牙串口轉 CAT 線進入配對模式，在下方選擇該轉接器。FTX-1 的藍牙音訊連線不提供 CAT。請按線材說明確認 PIN。</string>
+</resources>

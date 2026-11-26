@@ -906,7 +906,7 @@
     <string name="gridfinder_action_set_lotw_station">设为 LoTW 上传台址（%1$s）</string>
     <string name="gridfinder_lotw_station_hint">预填上传台站网格：上传时 LoTW 按这些格记录（线上 2 格、角上 4 格）；证书呼号保持不变。</string>
 
-    <string name="rc_ic820_limits">IC-820：CI-V 地址 0x42，1200 波特（8N1）。请在电台预设卫星模式和亚音，在此选择单机半双工。不支持 CAT PTT。</string>
+    <string name="rc_ic820_limits">IC-820：选择单机控制，MAIN 发射、SUB 接收。按所选目标自动设置频段和模式；PTT 请选择外接接口或 VOX。</string>
     <string name="rc_n76_bluetooth_audio">蓝牙音频</string>
     <string name="rc_n76_options">N76 选项</string>
     <string name="rc_n76_firmware">固件模式</string>

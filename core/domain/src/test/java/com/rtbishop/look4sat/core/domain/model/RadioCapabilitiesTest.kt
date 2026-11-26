@@ -67,7 +67,7 @@ class RadioCapabilitiesTest {
         val ft817 = radioModelDescriptor(RadioControlSettings.MODEL_YAESU_FT817)
         assertEquals(RadioProtocolFamily.YAESU_CAT, ft817.protocolFamily)
         assertFalse(ft817.capabilities.fullDuplex)
-        assertFalse(ft817.capabilities.singleRadioSplit)
+        assertTrue(ft817.capabilities.singleRadioSplit)
         assertTrue(ft817.capabilities.dataMode)
         assertTrue(ft817.capabilities.narrowFm)
         assertNull(ft817.defaultCivAddress)

@@ -16,6 +16,7 @@ internal class Ft847Controller(
     private var selected = 0
     override val isConnected get() = identified && transport.isConnected
     override val supportsPttReadback get() = true
+    override fun quantizeTrackingFrequency(frequencyHz: Long) = ((frequencyHz + 5L) / 10L) * 10L
 
     override suspend fun connect(): Boolean {
         var ready = false
@@ -109,17 +110,24 @@ internal class Ft847Controller(
         if (!transport.isConnected) return null
         transport.readAvailable(64)
         if (!write(opcode)) return null
-        return withTimeoutOrNull(500L) {
-            val output = ByteArray(size)
-            var offset = 0
-            while (offset < size) {
-                if (!transport.isConnected) return@withTimeoutOrNull null
-                val chunk = transport.readAvailable(size - offset)
-                chunk.copyInto(output, offset)
-                offset += chunk.size
-                if (offset < size) delay(5)
+        var complete = false
+        try {
+            return withTimeoutOrNull(500L) {
+                val output = ByteArray(size)
+                var offset = 0
+                while (offset < size) {
+                    if (!transport.isConnected) return@withTimeoutOrNull null
+                    val chunk = transport.readAvailable(size - offset)
+                    chunk.copyInto(output, offset)
+                    offset += chunk.size
+                    if (offset < size) delay(5)
+                }
+                complete = true
+                output
             }
-            output
+        } finally {
+            // A late untagged byte could otherwise confirm a later PTT operation.
+            if (!complete) withContext(NonCancellable) { transport.disconnect() }
         }
     }
 

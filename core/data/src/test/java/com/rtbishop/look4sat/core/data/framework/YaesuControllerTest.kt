@@ -94,13 +94,13 @@ class YaesuControllerTest {
         assertTrue(controller.pttOn())
         assertTrue(controller.pttOff())
         assertEquals(
-            listOf(0x03, 0x01, 0x08, 0xF7, 0x88, 0xF7),
+            listOf(0x03, 0x01, 0x03, 0x08, 0xF7, 0x88, 0xF7),
             transport.commands
         )
     }
 
     @Test
-    fun ft857UsesSharedLegacyCommandsWithoutTxStatusPolling() = runTest {
+    fun ft857ConfirmsTxStatusAfterBothKeyingCommands() = runTest {
         val transport = ScriptedYaesuTransport()
         val controller = Ft817Controller(
             bluetoothManager = null,
@@ -112,7 +112,7 @@ class YaesuControllerTest {
         assertTrue(controller.connect())
         assertTrue(controller.pttOn())
         assertTrue(controller.pttOff())
-        assertEquals(listOf(0x03, 0x08, 0x88), transport.commands)
+        assertEquals(listOf(0x03, 0x08, 0xF7, 0x88, 0xF7), transport.commands)
     }
 
     @Test fun missingFirstAckDoesNotPoisonLaterFrequencyOrPttReplies() = runTest {
@@ -153,7 +153,17 @@ class YaesuControllerTest {
         assertTrue(controller.setFrequency(145_500_000L))
         assertTrue(controller.setMode("USB"))
         assertTrue(controller.pttOn())
-        assertEquals(listOf(0x03, 0x01, 0x07, 0x08, 0xF7), transport.commands)
+        assertEquals(listOf(0x03, 0x01, 0x03, 0x07, 0x03, 0x08, 0xF7), transport.commands)
+    }
+
+    @Test fun ignoredModeAndFrequencyCommandsAreNotReportedAsApplied() = runTest {
+        val transport = ScriptedYaesuTransport(ack = null)
+        val radio = Ft817Controller(null, "USB", transport)
+        assertTrue(radio.connect())
+        assertFalse(radio.setMode("CW"))
+        assertFalse(radio.setFrequency(435_100_000L))
+        assertEquals(145_500_000L to "USB", radio.readFrequencyAndMode())
+        assertTrue(radio.pttOff())
     }
 }
 

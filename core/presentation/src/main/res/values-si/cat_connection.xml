@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_page_radio">ගුවන්විදුලිය</string>
+    <string name="cat_page_connection">සම්බන්ධතාව</string>
+    <string name="cat_page_ptt">PTT</string>
+    <string name="cat_page_advanced">වෙනත් පරාමිති</string>
+    <string name="cat_model_search">ගුවන්විදුලි ආකෘති සොයන්න</string>
+    <string name="cat_connection_status">වත්මන් සම්බන්ධතාව</string>
+    <string name="cat_connected">සම්බන්ධයි</string>
+    <string name="cat_disconnected">සම්බන්ධ නැත</string>
+    <string name="cat_save_connect">සුරකින්න සහ සම්බන්ධ කරන්න</string>
+    <string name="cat_disconnect">විසන්ධි කරන්න</string>
+    <string name="cat_back">ආපසු</string>
+    <string name="cat_pair_title">Bluetooth යුගල කිරීම</string>
+    <string name="cat_pair_permission">Bluetooth සෙවීමට අවසර දෙන්න</string>
+    <string name="cat_pair_enable">Bluetooth සක්‍රිය කරන්න</string>
+    <string name="cat_pair_search">උපාංග සොයන්න</string>
+    <string name="cat_pair_stop_search">සෙවීම නවත්වන්න</string>
+    <string name="cat_pair_system">පද්ධති Bluetooth සැකසුම්</string>
+    <string name="cat_pair_confirm">දුරකථනයේ සහ ගුවන්විදුලියේ යුගල කිරීම තහවුරු කරන්න.</string>
+    <string name="cat_pair_failed">යුගල කිරීම හෝ සෙවීම අසාර්ථකයි. අවසර සහ යුගල කිරීමේ ප්‍රකාරය පරීක්ෂා කර නැවත උත්සාහ කරන්න.</string>
+    <string name="cat_pair_empty">උපාංග හමු නොවීය. ගුවන්විදුලිය හෝ අනුවර්තකය යුගල කිරීමේ ප්‍රකාරයට දමා සොයන්න.</string>
+    <string name="cat_pair_bonded">යුගල කර ඇත</string>
+    <string name="cat_pair_bonding">යුගල කරමින්…</string>
+    <string name="cat_pair_unpaired">යුගල කර නැත</string>
+    <string name="cat_pair_use">උපාංගය භාවිත කරන්න</string>
+    <string name="cat_pair_action">උපාංගය යුගල කරන්න</string>
+    <string name="cat_pair_generic">ගුවන්විදුලිය හෝ Bluetooth අනුක්‍රමික අනුවර්තකය යුගල කිරීමේ ප්‍රකාරයට දමන්න. දත්ත සම්බන්ධතාව තෝරා පද්ධති ඉල්ලීම තහවුරු කරන්න.</string>
+    <string name="cat_pair_ic705">IC-705 හි SET &gt; Bluetooth Set විවෘත කර Bluetooth සක්‍රිය කර &lt;&lt;Pairing Reception&gt;&gt; තෝරන්න. ICOM BT(IC-705) සොයා උපාංග දෙකේ එකම කේතය තහවුරු කරන්න. PIN ඉල්ලුවහොත් ගුවන්විදුලියේ PIN භාවිත කරන්න (පෙරනිමි 0000). වෙනත් CAT යෙදුම් වසන්න.</string>
+    <string name="cat_pair_ftx1">Bluetooth-CAT අනුක්‍රමික කේබලය යුගල කිරීමේ ප්‍රකාරයට දමා එම අනුවර්තකය තෝරන්න. FTX-1 Bluetooth ශ්‍රව්‍ය සම්බන්ධතාව CAT සපයන්නේ නැත. කේබලයේ උපදෙස්වල PIN භාවිත කරන්න.</string>
+</resources>

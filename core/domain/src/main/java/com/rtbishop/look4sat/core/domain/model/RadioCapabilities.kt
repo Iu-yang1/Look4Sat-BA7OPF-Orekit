@@ -122,7 +122,7 @@ object RadioModelCatalog {
                 fullDuplex = false,
                 receiveOnly = false,
                 frequencyReadback = true,
-                singleRadioSplit = false,
+                singleRadioSplit = true,
                 satelliteMode = false,
                 dataMode = true,
                 ptt = true,

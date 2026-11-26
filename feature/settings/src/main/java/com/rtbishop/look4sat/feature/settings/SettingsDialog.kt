@@ -63,6 +63,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -1244,6 +1245,9 @@ fun RadioControlDialog(
     onSave: (RadioControlSettings) -> Unit,
     frequencyLocked:Boolean=false,
     radioAudioSession: com.rtbishop.look4sat.core.domain.audio.IRadioAudioSession? = null,
+    trackingState: com.rtbishop.look4sat.core.domain.repository.RadioTrackingState = com.rtbishop.look4sat.core.domain.repository.RadioTrackingState(),
+    onConnect: ((RadioControlSettings) -> Unit)? = null,
+    onDisconnect: (() -> Unit)? = null,
     audioSettingsForModel: (String)->com.rtbishop.look4sat.core.domain.audio.RadioAudioSettings = {
         if(it==initialSettings.radioModel) initialSettings.radioAudio else com.rtbishop.look4sat.core.domain.audio.RadioAudioSettings()
     }
@@ -1251,6 +1255,10 @@ fun RadioControlDialog(
     val context    = androidx.compose.ui.platform.LocalContext.current
     val padding    = LocalSpacing.current.large
     val enabled    = rememberSaveable { mutableStateOf(initialSettings.enabled) }
+    var catPage by rememberSaveable { mutableIntStateOf(0) }
+    var modelSearch by rememberSaveable { mutableStateOf("") }
+    var bluetoothTarget by rememberSaveable { mutableStateOf("") }
+    var connectAfterSave by remember { mutableStateOf(false) }
     val radioModel = rememberSaveable { mutableStateOf(initialSettings.radioModel) }
     var audioSettings by remember(radioModel.value) { mutableStateOf(
         audioSettingsForModel(radioModel.value)) }
@@ -1384,6 +1392,7 @@ fun RadioControlDialog(
         val selection = pending.copy(address = address)
         if (selection.target == "ptt") {
             pttUsbAddress = selection.address
+            catPage = 2
         } else if (selection.target == "tx") {
             txAddress.value = selection.address
             txName.value = selection.name
@@ -1463,18 +1472,14 @@ fun RadioControlDialog(
     }
 
     val selectDevice: (String) -> Unit = { target ->
-        selectingFor.value = target
-        usbPermissionDenied.value = false
-        if (
-            (if (target == "rx") effectiveRxTransport else catTransport.value) == RadioControlSettings.TRANSPORT_BLUETOOTH &&
-            target != "ptt" &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_CONNECT
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        val transport = if (target == "rx") effectiveRxTransport else catTransport.value
+        if (target != "ptt" && transport == RadioControlSettings.TRANSPORT_BLUETOOTH) {
+            selectingFor.value = ""
+            bluetoothTarget = target
+        } else {
+            selectingFor.value = target
+            if (target == "ptt") catPage = 1
+            usbPermissionDenied.value = false
         }
     }
 
@@ -1721,8 +1726,8 @@ fun RadioControlDialog(
                 lanLogin = txLanLogin.takeIf { txKenwoodLan && validKenwoodLogin(radioModel.value, it) }
             )
         if (issues.isEmpty()) {
-            onSave(draft)
-            onDismiss()
+            if (connectAfterSave && onConnect != null) onConnect(draft)
+            else { onSave(draft); onDismiss() }
         } else {
             configurationErrors = issues
             rejectedDraft = draft
@@ -1750,8 +1755,8 @@ fun RadioControlDialog(
             confirmButton = {
                 TextButton(onClick = {
                     rejectedDraft = null
-                    onSave(draft)
-                    onDismiss()
+                    if (connectAfterSave && onConnect != null) onConnect(draft)
+                    else { onSave(draft); onDismiss() }
                 }) { Text(stringResource(R.string.rc_config_ignore_save)) }
             },
             dismissButton = {
@@ -1759,18 +1764,27 @@ fun RadioControlDialog(
             }
         )
     }
+    androidx.activity.compose.BackHandler(enabled = bluetoothTarget.isNotEmpty()) { bluetoothTarget = "" }
     SharedDialog(
-        title    = stringResource(R.string.rc_settings_title),
-        onCancel = onDismiss,
-        onAccept = onAccept
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxHeight(0.82f)
-                .verticalScroll(rememberScrollState())
+        title = stringResource(if (bluetoothTarget.isEmpty()) R.string.rc_settings_title else R.string.cat_pair_title),
+        onDismissRequest = { if (bluetoothTarget.isNotEmpty()) bluetoothTarget = "" else onDismiss() },
+        onCancel = { if (bluetoothTarget.isNotEmpty()) bluetoothTarget = "" else onDismiss() },
+        cancelText = stringResource(if (bluetoothTarget.isEmpty()) R.string.btn_cancel else R.string.cat_back),
+        onAccept = if (bluetoothTarget.isEmpty()) ({ connectAfterSave = false; onAccept() }) else null
+    ) { _ ->
+        if (bluetoothTarget.isNotEmpty()) {
+            Box(Modifier.fillMaxHeight(0.82f)) {
+                RadioBluetoothPairing(if (bluetoothTarget == "rx" && separateRx) rxModel else radioModel.value) { address, name ->
+                    if (bluetoothTarget == "tx") { txAddress.value = address; txName.value = name }
+                    else { rxAddress.value = address; rxName.value = name }
+                    bluetoothTarget = ""
+                    bluetoothDevicesRevision.intValue++
+                }
+            }
+        } else Column(
+            modifier = Modifier.fillMaxHeight(0.82f).verticalScroll(rememberScrollState())
                 .padding(horizontal = padding)
         ) {
-
             // Enable switch
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1782,123 +1796,26 @@ fun RadioControlDialog(
             }
             Spacer(modifier = Modifier.height(6.dp))
 
-            Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
-            if(radioAudioSession!=null) OutlinedButton(onClick={ showAudioSettings=true },enabled=!frequencyLocked) {
-                Text(stringResource(R.string.radio_audio_title))
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                radioControlTransports(radioModel.value).forEach { transport ->
-                    FilterChip(
-                        selected = catTransport.value == transport,
-                        onClick = {
-                            txAddressByTransport[catTransport.value] = txAddress.value
-                            rxAddressByTransport[catTransport.value] = rxAddress.value
-                            txNameByTransport[catTransport.value] = txName.value
-                            rxNameByTransport[catTransport.value] = rxName.value
-                            catTransport.value = transport
-                            if (transport == RadioControlSettings.TRANSPORT_VOX) {
-                                pttMethod = RadioPttMethod.VOX
-                            } else if (transport != RadioControlSettings.TRANSPORT_USB && pttMethod == RadioPttMethod.USB_CAT) {
-                                pttMethod = RadioPttMethod.CAT
-                            }
-                            txAddress.value = txAddressByTransport[transport].orEmpty()
-                            rxAddress.value = rxAddressByTransport[transport].orEmpty()
-                            txName.value = txNameByTransport[transport].orEmpty()
-                            rxName.value = rxNameByTransport[transport].orEmpty()
-                            txAddressError.value = false
-                            rxAddressError.value = false
-                            txUsbError.value = null
-                            rxUsbError.value = null
-                            usbPermissionDenied.value = false
-                            selectingFor.value = ""
-                        },
-                        label = { Text(if (transport == RadioControlSettings.TRANSPORT_VOX)
-                            stringResource(R.string.rc_ptt_no_cat) else transport, fontSize = 12.sp) },
-                        enabled = enabled.value || transport == RadioControlSettings.TRANSPORT_VOX
-                    )
-                }
-            }
-            Text(stringResource(R.string.rc_ptt_method), fontWeight = FontWeight.Medium)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                val methods = mapOf(
-                    RadioPttMethod.CAT to R.string.rc_ptt_cat,
-                    RadioPttMethod.USB_CAT to R.string.rc_ptt_same_port,
-                    RadioPttMethod.USB_SEPARATE to R.string.rc_ptt_separate_port,
-                    RadioPttMethod.VOX to R.string.rc_ptt_vox,
-                    RadioPttMethod.RECEIVE_ONLY to R.string.rc_ptt_receive_only
-                )
-                methods.forEach { (method, label) ->
-                    val available = when (method) {
-                        RadioPttMethod.CAT -> !isVox && modelDescriptor.capabilities.ptt
-                        RadioPttMethod.USB_CAT -> catTransport.value == RadioControlSettings.TRANSPORT_USB &&
-                            !isL4s && usbFlow.value == "NONE"
-                        RadioPttMethod.USB_SEPARATE -> !isVox
-                        else -> true
+            Text(radioModel.value, style = MaterialTheme.typography.titleMedium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(R.string.cat_page_radio, R.string.cat_page_connection, R.string.cat_page_ptt, R.string.cat_page_advanced)
+                    .forEachIndexed { index, label ->
+                        FilterChip(selected = catPage == index, onClick = { catPage = index; selectingFor.value = "" },
+                            label = { Text(stringResource(label)) }, modifier = Modifier.heightIn(min = 48.dp))
                     }
-                    FilterChip(
-                        selected = pttMethod == method,
-                        enabled = available,
-                        onClick = { pttMethod = method; selectingFor.value = "" },
-                        label = { Text(stringResource(label)) }
-                    )
-                }
             }
-            if (pttMethod == RadioPttMethod.USB_CAT || pttMethod == RadioPttMethod.USB_SEPARATE) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    RadioPttLine.entries.forEach { line ->
-                        FilterChip(selected = pttLine == line, onClick = { pttLine = line }, label = { Text(line.name) })
-                    }
-                    FilterChip(selected = pttActiveHigh, onClick = { pttActiveHigh = true },
-                        label = { Text(stringResource(R.string.rc_ptt_active_high)) })
-                    FilterChip(selected = !pttActiveHigh, onClick = { pttActiveHigh = false },
-                        label = { Text(stringResource(R.string.rc_ptt_active_low)) })
-                }
-                if (pttMethod == RadioPttMethod.USB_SEPARATE) {
-                    OutlinedButton(onClick = { selectDevice("ptt") }) {
-                        Text(stringResource(R.string.rc_ptt_select_port))
-                    }
-                    if (pttUsbAddress.isNotBlank()) Text(pairedDevices.firstOrNull { it.address == pttUsbAddress }?.name ?: pttUsbAddress)
-                }
-            }
-            if (pttMethod == RadioPttMethod.VOX) {
-                OutlinedTextField(value = voxRelease, onValueChange = { voxRelease = it },
-                    label = { Text(stringResource(R.string.rc_ptt_vox_release)) }, singleLine = true)
-            }
-            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
-                Text(stringResource(R.string.rc_tcp_protocol), fontWeight = FontWeight.Medium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    RadioControlSettings.tcpProtocolsFor(radioModel.value).forEach { protocol ->
-                        FilterChip(
-                            selected = tcpProtocol.value == protocol,
-                            onClick = { tcpProtocol.value = protocol },
-                            label = {
-                                Text(
-                                    stringResource(
-                                        tcpProtocolLabel(protocol)
-                                    ),
-                                    fontSize = 12.sp
-                                )
-                            },
-                            enabled = enabled.value
-                        )
-                    }
-                }
-            }
-            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
-                tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) {
-                KenwoodLanFields(radioModel.value, txLanLogin) { txLanLogin = it }
-            }
-            if (!isVox) {
-            Spacer(modifier = Modifier.height(6.dp))
-
+            if (catPage == 0) {
             // Radio model — FlowRow so chips wrap on small screens
             Text(
                 text       = stringResource(R.string.rc_radio_model),
                 fontWeight = FontWeight.Medium,
                 color      = androidx.compose.material3.MaterialTheme.colorScheme.primary
             )
+            OutlinedTextField(value = modelSearch, onValueChange = { modelSearch = it },
+                label = { Text(stringResource(R.string.cat_model_search)) }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(catTransport.value).forEach { model ->
+                com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.supportedModels.filter { it.contains(modelSearch, ignoreCase = true) }.forEach { model ->
                     FilterChip(
                         selected = radioModel.value == model,
                         onClick  = {
@@ -1906,6 +1823,11 @@ fun RadioControlDialog(
                             val currentAddress = parseCivAddress(civAddress.value)
                             val modelChanged = radioModel.value != model
                             radioModel.value = model
+                            if (catTransport.value !in radioControlTransports(model)) {
+                                catTransport.value = radioControlTransports(model).first()
+                                txAddress.value = txAddressByTransport[catTransport.value].orEmpty()
+                                txName.value = txNameByTransport[catTransport.value].orEmpty()
+                            }
                             if (model == RadioControlSettings.MODEL_VERO_N76) splitMode.value = true
                             if (radioModelDescriptor(model).protocolFamily == RadioProtocolFamily.L4S ||
                                 model == RadioControlSettings.MODEL_YAESU_FTX1) {
@@ -1944,48 +1866,6 @@ fun RadioControlDialog(
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
-
-            if (isFtx1) Text(
-                stringResource(
-                    if (catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH) {
-                        R.string.rc_ftx1_bluetooth_hint
-                    } else R.string.rc_ftx1_usb_hint
-                ),
-                style = MaterialTheme.typography.bodySmall
-            )
-            if (isN76) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.rc_n76_bluetooth_audio), modifier = Modifier.weight(1f))
-                    Switch(checked = n76BluetoothAudio.value, onCheckedChange = { n76BluetoothAudio.value = it },
-                        enabled = enabled.value && !frequencyLocked)
-                }
-                OutlinedButton(onClick = { showN76Options = true }, modifier = Modifier.fillMaxWidth(), enabled = enabled.value && !frequencyLocked) {
-                    Text(stringResource(R.string.rc_n76_options))
-                }
-            }
-            if (
-                isIcom &&
-                !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
-                    tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-            ) {
-                OutlinedTextField(
-                    value = civAddress.value,
-                    onValueChange = {
-                        civAddress.value = it
-                        civAddressError.value = false
-                    },
-                    label = { Text(stringResource(R.string.rc_civ_address)) },
-                    supportingText = if (civAddressError.value) {
-                        { Text(stringResource(R.string.rc_civ_address_error)) }
-                    } else null,
-                    isError = civAddressError.value,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = enabled.value
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-            }
 
             // Single-radio duplex control for Icom split or dedicated satellite mode.
             if (radioModel.value == RadioControlSettings.MODEL_ICOM_IC820) {
@@ -2029,7 +1909,8 @@ fun RadioControlDialog(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            if (isSingleRadio && !modelDescriptor.capabilities.singleRadioSplit) {
+            if (isSingleRadio && !modelDescriptor.capabilities.singleRadioSplit &&
+                radioModel.value != RadioControlSettings.MODEL_ICOM_IC820) {
                 Text(stringResource(R.string.rc_manual_half_duplex), style = MaterialTheme.typography.bodySmall)
             }
             if (isSingleRadio && supportsSatelliteMode) {
@@ -2055,6 +1936,110 @@ fun RadioControlDialog(
                         enabled = enabled.value
                     )
                 }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            }
+            if (catPage == 1) {
+            Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
+            if(radioAudioSession!=null) OutlinedButton(onClick={ showAudioSettings=true },enabled=!frequencyLocked) {
+                Text(stringResource(R.string.radio_audio_title))
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                radioControlTransports(radioModel.value).forEach { transport ->
+                    FilterChip(
+                        selected = catTransport.value == transport,
+                        onClick = {
+                            txAddressByTransport[catTransport.value] = txAddress.value
+                            rxAddressByTransport[catTransport.value] = rxAddress.value
+                            txNameByTransport[catTransport.value] = txName.value
+                            rxNameByTransport[catTransport.value] = rxName.value
+                            catTransport.value = transport
+                            if (transport == RadioControlSettings.TRANSPORT_VOX) {
+                                pttMethod = RadioPttMethod.VOX
+                            } else if (transport != RadioControlSettings.TRANSPORT_USB && pttMethod == RadioPttMethod.USB_CAT) {
+                                pttMethod = RadioPttMethod.CAT
+                            }
+                            txAddress.value = txAddressByTransport[transport].orEmpty()
+                            rxAddress.value = rxAddressByTransport[transport].orEmpty()
+                            txName.value = txNameByTransport[transport].orEmpty()
+                            rxName.value = rxNameByTransport[transport].orEmpty()
+                            txAddressError.value = false
+                            rxAddressError.value = false
+                            txUsbError.value = null
+                            rxUsbError.value = null
+                            usbPermissionDenied.value = false
+                            selectingFor.value = ""
+                        },
+                        label = { Text(if (transport == RadioControlSettings.TRANSPORT_VOX)
+                            stringResource(R.string.rc_ptt_no_cat) else transport, fontSize = 12.sp) },
+                        enabled = enabled.value || transport == RadioControlSettings.TRANSPORT_VOX
+                    )
+                }
+            }
+            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
+                Text(stringResource(R.string.rc_tcp_protocol), fontWeight = FontWeight.Medium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RadioControlSettings.tcpProtocolsFor(radioModel.value).forEach { protocol ->
+                        FilterChip(
+                            selected = tcpProtocol.value == protocol,
+                            onClick = { tcpProtocol.value = protocol },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        tcpProtocolLabel(protocol)
+                                    ),
+                                    fontSize = 12.sp
+                                )
+                            },
+                            enabled = enabled.value
+                        )
+                    }
+                }
+            }
+            if (catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
+                tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_KENWOOD_LAN) {
+                KenwoodLanFields(radioModel.value, txLanLogin) { txLanLogin = it }
+            }
+            if (isFtx1) Text(
+                stringResource(
+                    if (catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH) {
+                        R.string.rc_ftx1_bluetooth_hint
+                    } else R.string.rc_ftx1_usb_hint
+                ),
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (isN76) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.rc_n76_bluetooth_audio), modifier = Modifier.weight(1f))
+                    Switch(checked = n76BluetoothAudio.value, onCheckedChange = { n76BluetoothAudio.value = it },
+                        enabled = enabled.value && !frequencyLocked)
+                }
+                OutlinedButton(onClick = { showN76Options = true }, modifier = Modifier.fillMaxWidth(), enabled = enabled.value && !frequencyLocked) {
+                    Text(stringResource(R.string.rc_n76_options))
+                }
+            }
+            if (
+                isIcom &&
+                !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
+                    tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
+            ) {
+                OutlinedTextField(
+                    value = civAddress.value,
+                    onValueChange = {
+                        civAddress.value = it
+                        civAddressError.value = false
+                    },
+                    label = { Text(stringResource(R.string.rc_civ_address)) },
+                    supportingText = if (civAddressError.value) {
+                        { Text(stringResource(R.string.rc_civ_address_error)) }
+                    } else null,
+                    isError = civAddressError.value,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = enabled.value
+                )
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
@@ -2335,6 +2320,69 @@ fun RadioControlDialog(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
+
+                Text(stringResource(R.string.cat_connection_status), style = MaterialTheme.typography.titleSmall)
+                Text("TX: " + stringResource(if (trackingState.txConnected) R.string.cat_connected else R.string.cat_disconnected))
+                if (!isSingleRadio) Text("RX: " + stringResource(if (trackingState.rxConnected) R.string.cat_connected else R.string.cat_disconnected))
+                trackingState.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (onConnect != null) Button(onClick = { connectAfterSave = true; onAccept() },
+                    enabled = enabled.value && !frequencyLocked && !trackingState.commandBusy,
+                    modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.cat_save_connect)) }
+                if (onDisconnect != null && (trackingState.txConnected || trackingState.rxConnected)) {
+                    OutlinedButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.cat_disconnect))
+                    }
+                }
+            }
+            if (catPage == 2) {
+            Text(stringResource(R.string.rc_ptt_method), fontWeight = FontWeight.Medium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                val methods = mapOf(
+                    RadioPttMethod.CAT to R.string.rc_ptt_cat,
+                    RadioPttMethod.USB_CAT to R.string.rc_ptt_same_port,
+                    RadioPttMethod.USB_SEPARATE to R.string.rc_ptt_separate_port,
+                    RadioPttMethod.VOX to R.string.rc_ptt_vox,
+                    RadioPttMethod.RECEIVE_ONLY to R.string.rc_ptt_receive_only
+                )
+                methods.forEach { (method, label) ->
+                    val available = when (method) {
+                        RadioPttMethod.CAT -> !isVox && modelDescriptor.capabilities.ptt
+                        RadioPttMethod.USB_CAT -> catTransport.value == RadioControlSettings.TRANSPORT_USB &&
+                            !isL4s && usbFlow.value == "NONE"
+                        RadioPttMethod.USB_SEPARATE -> !isVox
+                        else -> true
+                    }
+                    FilterChip(
+                        selected = pttMethod == method,
+                        enabled = available,
+                        onClick = { pttMethod = method; selectingFor.value = "" },
+                        label = { Text(stringResource(label)) }
+                    )
+                }
+            }
+            if (pttMethod == RadioPttMethod.USB_CAT || pttMethod == RadioPttMethod.USB_SEPARATE) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    RadioPttLine.entries.forEach { line ->
+                        FilterChip(selected = pttLine == line, onClick = { pttLine = line }, label = { Text(line.name) })
+                    }
+                    FilterChip(selected = pttActiveHigh, onClick = { pttActiveHigh = true },
+                        label = { Text(stringResource(R.string.rc_ptt_active_high)) })
+                    FilterChip(selected = !pttActiveHigh, onClick = { pttActiveHigh = false },
+                        label = { Text(stringResource(R.string.rc_ptt_active_low)) })
+                }
+                if (pttMethod == RadioPttMethod.USB_SEPARATE) {
+                    OutlinedButton(onClick = { selectDevice("ptt") }) {
+                        Text(stringResource(R.string.rc_ptt_select_port))
+                    }
+                    if (pttUsbAddress.isNotBlank()) Text(pairedDevices.firstOrNull { it.address == pttUsbAddress }?.name ?: pttUsbAddress)
+                }
+            }
+            if (pttMethod == RadioPttMethod.VOX) {
+                OutlinedTextField(value = voxRelease, onValueChange = { voxRelease = it },
+                    label = { Text(stringResource(R.string.rc_ptt_vox_release)) }, singleLine = true)
+            }
+            }
+            if (catPage == 3 && !isVox) {
             if (catTransport.value != RadioControlSettings.TRANSPORT_TCP && !isN76 &&
                 !(isFtx1 && catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH)) {
                 // Baud rate belongs to the local serial link. TCP bridges/rigctld own their serial settings.
@@ -2431,6 +2479,7 @@ fun RadioControlDialog(
             }
             Spacer(modifier = Modifier.height(6.dp))
             }
+            Spacer(Modifier.height(24.dp))
         }
     }
     if (showN76Options) {

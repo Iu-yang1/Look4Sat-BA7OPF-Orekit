@@ -54,10 +54,12 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
@@ -65,6 +67,122 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    @Test fun ft817AutomaticTransmitInitializesSplitAndModesBeforeKeyingAndRestoresDataMode() = kotlinx.coroutines.runBlocking {
+        for (rxA in listOf(true, false)) {
+            val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+            val wire = Ft817NativeSplitTest.Radio().apply { aSelected = rxA; split = false }
+            val fixture = Fixture(scope, FakeRadioController(), FakeRadioController(),
+                splitMode = true, transportFactory = { _, _, _, _ -> wire }, realControllers = true)
+            try {
+                fixture.service.connectRadios()
+                fixture.startTracking()
+                val initialized = kotlinx.coroutines.withTimeout(5000) {
+                    fixture.service.state.first { it.trackingPhase in setOf(TrackingPhase.READY, TrackingPhase.ERROR) }
+                }
+                assertEquals(initialized.errorMessage, TrackingPhase.READY, initialized.trackingPhase)
+                assertTrue(wire.split)
+                assertEquals(rxA, wire.aSelected)
+                assertArrayEquals(byteArrayOf(1, 1), wire.modes)
+                assertFalse(0x08 in wire.opcodes)
+                val lease = fixture.service.beginTransmit(fixture.request(999, automatic = true))
+                assertEquals(10, wire.modes[if (rxA) 1 else 0].toInt())
+                assertEquals(1, wire.modes[if (rxA) 0 else 1].toInt())
+                assertEquals(rxA, wire.aSelected)
+                fixture.service.confirmTransmitReady(lease)
+                assertTrue(wire.ptt)
+                assertEquals(1, wire.opcodes.count { it == 0x08 })
+                fixture.service.endTransmit(lease)
+                assertFalse(wire.ptt)
+                assertArrayEquals(byteArrayOf(1, 1), wire.modes)
+                assertEquals(rxA, wire.aSelected)
+                wire.digitalSettings[0] = 0x15
+                wire.ignoreDigitalWrite = true
+                assertTrue(runCatching { fixture.service.beginTransmit(fixture.request(1000, automatic = true)) }.isFailure)
+                assertFalse(wire.ptt)
+                assertEquals(1, wire.opcodes.count { it == 0x08 })
+                assertArrayEquals(byteArrayOf(1, 1), wire.modes)
+            } finally {
+                fixture.close()
+                scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            }
+            assertFalse(wire.split)
+        }
+    }
+
+    @Test fun ic705NetworkCatDoesNotRerouteTheIndependentUsbPttPort() = runTest {
+        val tx = FakeRadioController().apply { txFrequencyHz = 145900000 }
+        val routes = mutableListOf<String>()
+        val levels = mutableListOf<Boolean>()
+        val line = object : RadioTransport {
+            override var isConnected = false
+            override suspend fun connect(): Boolean { isConnected = true; return true }
+            override suspend fun disconnect() { isConnected = false }
+            override suspend fun write(bytes: ByteArray) = error("No CAT on PTT port")
+            override suspend fun readAvailable(maxBytes: Int): ByteArray = error("No CAT on PTT port")
+            override fun reserveUsbPtt(line: com.rtbishop.look4sat.core.domain.model.RadioPttLine, activeHigh: Boolean) = true
+            override suspend fun setUsbPtt(active: Boolean): Boolean { levels += active; return true }
+        }
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_ICOM_IC705, splitMode = true,
+            transport = RadioControlSettings.TRANSPORT_TCP,
+            transportFactory = { type, address, _, _ -> routes += "$type/$address"; line })
+        val initial = fixture.settings.radioControlSettings.value
+        fixture.settings.radioControlSettings.value = initial.copy(
+            txRadioAddress = "localhost:50001",
+            radioAudio = initial.radioAudio.copy(networkCat = true,
+                backend = com.rtbishop.look4sat.core.domain.audio.RadioAudioBackend.ICOM_WLAN),
+            ptt = com.rtbishop.look4sat.core.domain.model.RadioPttSettings(
+                method = com.rtbishop.look4sat.core.domain.model.RadioPttMethod.USB_SEPARATE,
+                usbAddress = "10:0:1"))
+        fixture.service.connectRadios()
+        val lease = fixture.service.beginTransmit(fixture.request(999).copy(
+            mode = com.rtbishop.look4sat.core.domain.ft4.DigitalTransmitMode.DIAGNOSTIC,
+            waveformDurationMillis = 1000, maximumPttMillis = 5000))
+        fixture.service.confirmTransmitReady(lease)
+        assertEquals(listOf("USB/10:0:1"), routes)
+        assertEquals(listOf(true), levels)
+        fixture.service.endTransmit(lease)
+        assertTrue(false in levels)
+        assertFalse(tx.operations.any { it == "ptt:on" })
+        fixture.close()
+    }
+
+    @Test fun flexRigctldChoiceUsesHamlibThroughTheNormalConnectionEntry() = kotlinx.coroutines.runBlocking {
+        val commands = mutableListOf<String>()
+        val replies = ArrayDeque<Byte>()
+        val wire = object : RadioTransport {
+            override var isConnected = false
+            override suspend fun connect(): Boolean { isConnected = true; return true }
+            override suspend fun disconnect() { isConnected = false }
+            override suspend fun write(bytes: ByteArray): Boolean {
+                val command = bytes.decodeToString().trim()
+                commands += command
+                replies.addAll((when (command) {
+                    "\\get_freq" -> "145900000\n"
+                    "\\get_mode" -> "USB\n2400\n"
+                    else -> error("Not a rigctld command: $command")
+                }).encodeToByteArray().toList())
+                return true
+            }
+            override suspend fun readAvailable(maxBytes: Int) =
+                ByteArray(minOf(maxBytes, replies.size)) { replies.removeFirst() }
+        }
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val fixture = Fixture(scope, FakeRadioController(), FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_FLEX_SMARTSDR, transport = RadioControlSettings.TRANSPORT_TCP,
+            transportFactory = { _, _, _, _ -> wire }, realControllers = true)
+        fixture.settings.radioControlSettings.value = fixture.settings.radioControlSettings.value.copy(
+            txRadioAddress = "localhost:4532", tcpProtocol = RadioControlSettings.TCP_PROTOCOL_HAMLIB)
+        try {
+            fixture.service.connectRadios()
+            assertTrue(fixture.service.state.value.txConnected)
+            assertEquals(listOf("\\get_freq", "\\get_mode"), commands)
+        } finally {
+            fixture.close()
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        }
+    }
+
     @Test fun ordinarySplitProbeNeverUsesAReadThatSelectsTheOtherVfo() = runTest {
         val tx = FakeRadioController()
         val rx = FakeRadioController()
@@ -2052,7 +2170,8 @@ class RadioTrackingServiceTest {
         duplexMode: String = RadioControlSettings.DUPLEX_MODE_SPLIT,
         transport: String = RadioControlSettings.TRANSPORT_USB,
         diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
-        transportFactory: ((String, String, Int, Int) -> RadioTransport)? = null
+        transportFactory: ((String, String, Int, Int) -> RadioTransport)? = null,
+        realControllers: Boolean = false
     ) {
         val nominalTxHz = 145_900_000L
         val position = OrbitalPos(elevation = 0.5, distanceRate = 1.2, aboveHorizon = true)
@@ -2096,7 +2215,7 @@ class RadioTrackingServiceTest {
             satelliteRepo = satelliteRepo,
             settingsRepo = settings,
             clock = FixedClock(nowProvider),
-            controllerFactory = { _, address -> if (address == "TX") tx else rx },
+            controllerFactory = if (realControllers) null else { _, address -> if (address == "TX") tx else rx },
             diagnostics = diagnostics,
             transportFactory = transportFactory
         )

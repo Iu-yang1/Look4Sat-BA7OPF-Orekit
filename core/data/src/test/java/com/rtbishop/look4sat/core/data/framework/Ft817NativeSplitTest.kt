@@ -7,16 +7,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class Ft817NativeSplitTest {
-    private class Radio : RadioTransport {
+    internal class Radio : RadioTransport {
         override var isConnected = false
         var aSelected = true
         var split = true
         var ptt = false
         var ignoreFrequencyWrite = false
+        var ignoreModeWrite = false
+        var ignoreDigitalWrite = false
         var omitNextWriteAck = false
         var fragmentReplies = false
         val frequencies = longArrayOf(7_100_000L, 28_500_000L)
         val modes = byteArrayOf(1, 8)
+        val digitalSettings = byteArrayOf(0x15, 0xA7.toByte())
         val opcodes = mutableListOf<Int>()
         private val pending = ArrayDeque<Byte>()
         override suspend fun connect(): Boolean { isConnected = true; return true }
@@ -31,14 +34,24 @@ class Ft817NativeSplitTest {
                 0x03 -> Ft817CatProtocol.encodeFrequencyBcd(frequencies[index]) + byteArrayOf(modes[index])
                 0x01 -> { if (!ignoreFrequencyWrite) frequencies[index] =
                     Ft817CatProtocol.decodeFrequencyBcd(bytes.copyOfRange(0, 4)); byteArrayOf(0) }
+                0x07 -> { if (!ignoreModeWrite) modes[index] = bytes[0]; byteArrayOf(0) }
                 0xBB -> when (bytes[1].toInt() and 255) {
                     0x55 -> byteArrayOf(if (aSelected) 0 else 1, 0)
                     0x7A -> byteArrayOf(if (split) 0x80.toByte() else 0, 0)
+                    0x65 -> digitalSettings.copyOf()
                     else -> error("Unexpected EEPROM address")
                 }
                 0x81 -> { check(!ptt); aSelected = !aSelected; byteArrayOf(0) }
+                0xBC -> {
+                    check(bytes[0] == 0.toByte() && bytes[1] == 0x65.toByte())
+                    if (!ignoreDigitalWrite) {
+                        digitalSettings[0] = bytes[2]; digitalSettings[1] = bytes[3]
+                    }
+                    byteArrayOf()
+                }
                 0x02, 0x82 -> { split = opcode == 2; byteArrayOf(0) }
                 0xF7 -> byteArrayOf(if (ptt) 0 else 0xFF.toByte())
+                0x08 -> { ptt = true; byteArrayOf(0) }
                 0x88 -> { ptt = false; byteArrayOf(0) }
                 0x0A, 0x0B -> byteArrayOf(0)
                 else -> error("Unexpected opcode $opcode")
@@ -137,5 +150,48 @@ class Ft817NativeSplitTest {
         assertTrue(radio.setVfo(false))
         assertEquals(false, radio.getVfo())
         radio.disconnect()
+        assertFalse(link.split)
+    }
+
+    @Test fun automaticSplitModesDataAndCleanupPreserveEitherReceiveVfo() = runBlocking {
+        for (rxA in listOf(true, false)) {
+            val link = Radio().apply { split = false; aSelected = rxA }
+            val radio = Ft817Controller(null, "sim", link)
+            assertTrue(radio.connect())
+            assertTrue(radio.prepareTrackingContext("FT4"))
+            assertTrue(radio.setSplitMode(true))
+            assertTrue(radio.setSplitModes("USB", "LSB"))
+            assertEquals(1, link.modes[if (rxA) 0 else 1].toInt())
+            assertEquals(0, link.modes[if (rxA) 1 else 0].toInt())
+            assertEquals(rxA, link.aSelected)
+            assertTrue(radio.setTxDataMode(true, "LSB"))
+            assertArrayEquals(byteArrayOf(0x75, 0xA7.toByte()), link.digitalSettings)
+            assertEquals(10, link.modes[if (rxA) 1 else 0].toInt())
+            assertEquals(rxA, link.aSelected)
+            assertTrue(radio.setTxDataMode(false, "LSB"))
+            val menuWrites = link.opcodes.count { it == 0xBC }
+            assertTrue(radio.setTxDataMode(true, "LSB"))
+            assertEquals(menuWrites, link.opcodes.count { it == 0xBC })
+            assertTrue(radio.setTxDataMode(false, "LSB"))
+            link.ignoreModeWrite = true
+            assertFalse(radio.setSplitModes("CW", "CW"))
+            assertEquals(rxA, link.aSelected)
+            radio.disconnect()
+            assertFalse(link.split)
+            assertArrayEquals(byteArrayOf(0x15, 0xA7.toByte()), link.digitalSettings)
+        }
+    }
+
+    @Test fun laterOperatorDigitalMenuChangeIsNotOverwrittenOnDisconnect() = runBlocking {
+        val link = Radio()
+        val radio = Ft817Controller(null, "sim", link)
+        assertTrue(radio.connect())
+        assertTrue(radio.setTxDataMode(true, "USB"))
+        assertArrayEquals(byteArrayOf(0x95.toByte(), 0xA7.toByte()), link.digitalSettings)
+        link.digitalSettings[0] = 0x55
+        val writes = link.opcodes.count { it == 0xBC }
+        radio.disconnect()
+        assertEquals(writes, link.opcodes.count { it == 0xBC })
+        assertArrayEquals(byteArrayOf(0x55, 0xA7.toByte()), link.digitalSettings)
     }
 }

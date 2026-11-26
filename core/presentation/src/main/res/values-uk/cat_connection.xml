@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="cat_page_radio">Радіостанція</string>
+    <string name="cat_page_connection">З’єднання</string>
+    <string name="cat_page_ptt">PTT</string>
+    <string name="cat_page_advanced">Інші параметри</string>
+    <string name="cat_model_search">Пошук моделі</string>
+    <string name="cat_connection_status">Поточне з’єднання</string>
+    <string name="cat_connected">Підключено</string>
+    <string name="cat_disconnected">Відключено</string>
+    <string name="cat_save_connect">Зберегти й підключити</string>
+    <string name="cat_disconnect">Відключити</string>
+    <string name="cat_back">Назад</string>
+    <string name="cat_pair_title">Сполучення Bluetooth</string>
+    <string name="cat_pair_permission">Дозволити пошук Bluetooth</string>
+    <string name="cat_pair_enable">Увімкнути Bluetooth</string>
+    <string name="cat_pair_search">Знайти пристрої</string>
+    <string name="cat_pair_stop_search">Зупинити пошук</string>
+    <string name="cat_pair_system">Налаштування Bluetooth</string>
+    <string name="cat_pair_confirm">Підтвердьте сполучення на телефоні та радіостанції.</string>
+    <string name="cat_pair_failed">Помилка пошуку або сполучення. Перевірте дозволи та режим сполучення й повторіть спробу.</string>
+    <string name="cat_pair_empty">Пристроїв немає. Увімкніть режим сполучення радіостанції чи адаптера та повторіть пошук.</string>
+    <string name="cat_pair_bonded">Сполучено</string>
+    <string name="cat_pair_bonding">Сполучення…</string>
+    <string name="cat_pair_unpaired">Не сполучено</string>
+    <string name="cat_pair_use">Використати пристрій</string>
+    <string name="cat_pair_action">Сполучити пристрій</string>
+    <string name="cat_pair_generic">Увімкніть режим сполучення радіостанції або адаптера Bluetooth. Виберіть з’єднання даних і підтвердьте системний запит.</string>
+    <string name="cat_pair_ic705">На IC-705 відкрийте SET &gt; Bluetooth Set, увімкніть Bluetooth і виберіть &lt;&lt;Pairing Reception&gt;&gt;. Знайдіть ICOM BT(IC-705) та підтвердьте однаковий код на обох пристроях. За запитом PIN введіть PIN радіостанції (типово 0000). Закрийте інші програми CAT.</string>
+    <string name="cat_pair_ftx1">Увімкніть сполучення кабелю Bluetooth-CAT і виберіть цей адаптер. Аудіоз’єднання Bluetooth FTX-1 не надає CAT. Використовуйте PIN з інструкції кабелю.</string>
+</resources>

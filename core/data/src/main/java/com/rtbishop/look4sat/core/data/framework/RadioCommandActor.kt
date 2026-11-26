@@ -209,6 +209,7 @@ class SerialRadioController(
     override val remoteState get() = delegate.remoteState
     override val supportsAtomicPair get() = delegate.supportsAtomicPair
     override val supportsFrequencyControl get() = delegate.supportsFrequencyControl
+    override fun quantizeTrackingFrequency(frequencyHz: Long) = delegate.quantizeTrackingFrequency(frequencyHz)
     override suspend fun prepareSatelliteBands(rxHz: Long, txHz: Long) =
         execute { delegate.prepareSatelliteBands(rxHz, txHz) }
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?) =

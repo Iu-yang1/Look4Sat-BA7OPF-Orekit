@@ -51,6 +51,8 @@ interface RadioTransport : ControlTransport {
     fun reserveUsbPtt(line: com.rtbishop.look4sat.core.domain.model.RadioPttLine, activeHigh: Boolean): Boolean = false
     suspend fun setUsbPtt(active: Boolean): Boolean = false
     suspend fun readUsbModemStatus(): UsbModemStatus? = null
+    /** Compare against currently attached USB identities, including IDs changed by replugging. */
+    fun sharesUsbPortWith(otherSelector: String): Boolean = false
 }
 
 class TcpRadioTransport(
@@ -196,6 +198,15 @@ class UsbSerialRadioTransport(
             com.rtbishop.look4sat.core.domain.model.RadioPttLine.DTR -> cdcDtrOnConnect = pttIdle
         }
         return true
+    }
+
+    override fun sharesUsbPortWith(otherSelector: String): Boolean {
+        val own = selector ?: return false
+        val other = parseUsbSerialSelector(otherSelector) ?: return false
+        val devices = manager.deviceList.values
+        val ownDevice = resolveUsbDevice(devices, own) ?: return false
+        val otherDevice = resolveUsbDevice(devices, other) ?: return false
+        return usbSelectorsOverlap(own.copy(deviceId = ownDevice.deviceId), other.copy(deviceId = otherDevice.deviceId))
     }
 
     override suspend fun setUsbPtt(active: Boolean): Boolean = withContext(Dispatchers.IO) {
@@ -745,6 +756,10 @@ internal data class UsbSerialSelector(
     val productId: Int?,
     val driver: SerialUsbDriver? = null
 )
+
+internal fun usbSelectorsOverlap(left: UsbSerialSelector, right: UsbSerialSelector): Boolean =
+    left.deviceId == right.deviceId && setOf(left.controlInterfaceId, left.dataInterfaceId)
+        .any { it == right.controlInterfaceId || it == right.dataInterfaceId }
 
 internal typealias UsbSerialDriverKind = SerialUsbDriver
 

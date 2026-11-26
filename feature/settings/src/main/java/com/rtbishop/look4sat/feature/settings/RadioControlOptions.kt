@@ -15,7 +15,7 @@ internal fun radioControlTransports(model: String): List<String> {
             model == RadioControlSettings.MODEL_YAESU_FTX1 ->
                 transport == RadioControlSettings.TRANSPORT_USB ||
                     transport == RadioControlSettings.TRANSPORT_BLUETOOTH
-            else -> true
+            else -> model in com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(transport)
         }
     }
 }

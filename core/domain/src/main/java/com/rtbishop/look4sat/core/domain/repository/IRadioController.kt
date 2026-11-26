@@ -51,6 +51,9 @@ interface IRadioController {
 
     val isConnected: Boolean
 
+    /** Frequency actually represented by a successful write, including hardware channel steps. */
+    fun quantizeTrackingFrequency(frequencyHz: Long): Long = frequencyHz
+
     /** Null means a supported query failed, not a confirmed receive state. */
     val supportsPttReadback: Boolean get() = false
     suspend fun readPttState(): Boolean? = null

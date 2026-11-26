@@ -360,6 +360,9 @@ private fun SettingsScreen(
             onDismiss = { dialogs.radioControl = false },
             onSave = { onAction(SettingsAction.UpdateRadioControl(it)) },
             frequencyLocked = uiState.radioTrackingState.frequencyEditingLocked,
+            trackingState = uiState.radioTrackingState,
+            onConnect = { onAction(SettingsAction.ConnectRadio(it)) },
+            onDisconnect = { onAction(SettingsAction.DisconnectRadio) },
             radioAudioSession=radioAudioSession,
             audioSettingsForModel=audioSettingsForModel
         )

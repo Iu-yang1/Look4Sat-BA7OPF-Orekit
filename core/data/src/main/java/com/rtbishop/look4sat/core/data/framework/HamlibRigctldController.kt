@@ -70,7 +70,7 @@ class HamlibRigctldController(
 
     override suspend fun disconnect(): Unit = withContext(Dispatchers.IO + NonCancellable) {
         try {
-            if (isConnected && pttReadbackSupported) withTimeoutOrNull(DISCONNECT_PTT_TIMEOUT_MS) {
+            if (isConnected && pttReadbackSupported && !receiveOnly) withTimeoutOrNull(DISCONNECT_PTT_TIMEOUT_MS) {
                 ioMutex.withLock { setPttLocked(false) }
             }
             transport.disconnect()
@@ -106,6 +106,7 @@ class HamlibRigctldController(
 
     override suspend fun setTxDataMode(enabled: Boolean, baseMode: String): Boolean =
         withContext(Dispatchers.IO) {
+            if (!supportsFrequencyControl || receiveOnly) return@withContext false
             val target = dataModeTarget(enabled, baseMode)
             val hamlibMode = toHamlibMode(target) ?: return@withContext false
             val passband = if (target.equals("FM-N", ignoreCase = true)) NARROW_FM_PASSBAND_HZ else 0
@@ -113,10 +114,12 @@ class HamlibRigctldController(
         }
 
     override suspend fun setCtcssMode(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl || receiveOnly) return@withContext false
         ioMutex.withLock { setCommandLocked("\\set_func TONE ${if (enabled) 1 else 0}") }
     }
 
     override suspend fun setCtcssTone(toneHz: Double): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl || receiveOnly) return@withContext false
         if (!toneHz.isFinite() || toneHz !in 0.0..999.9) return@withContext false
         ioMutex.withLock { setCommandLocked("\\set_ctcss_tone ${(toneHz * 10).roundToInt()}") }
     }
@@ -148,10 +151,12 @@ class HamlibRigctldController(
     override suspend fun setBand(frequencyHz: Long): Boolean = frequencyHz > 0L
 
     override suspend fun setVfo(vfoA: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl) return@withContext false
         ioMutex.withLock { setCommandLocked("\\set_vfo ${if (vfoA) "VFOA" else "VFOB"}") }
     }
 
     override suspend fun setSplitMode(enabled: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl || receiveOnly) return@withContext false
         ioMutex.withLock {
             setCommandLocked("\\set_split_vfo ${if (enabled) 1 else 0} VFOB") &&
                 readSplitStateLocked() == enabled
@@ -160,6 +165,7 @@ class HamlibRigctldController(
 
     override suspend fun setSplitModes(rxMode: String?, txMode: String?): Boolean =
         withContext(Dispatchers.IO) {
+            if (!supportsFrequencyControl || receiveOnly) return@withContext false
             val normalizedRx = rxMode?.let(::toHamlibMode)
             val normalizedTx = txMode?.let(::toHamlibMode)
             if (rxMode != null && normalizedRx == null) return@withContext false
@@ -181,6 +187,7 @@ class HamlibRigctldController(
         }
 
     override suspend fun configureTxCtcss(toneHz: Double?): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl || receiveOnly) return@withContext false
         ioMutex.withLock {
             var restored = false
             val configured = try {
@@ -203,6 +210,7 @@ class HamlibRigctldController(
     override suspend fun setWorkingFrequency(frequencyHz: Long): Boolean = setFrequency(frequencyHz)
 
     override suspend fun setTxVfoFrequency(frequencyHz: Long): Boolean = withContext(Dispatchers.IO) {
+        if (!supportsFrequencyControl || receiveOnly) return@withContext false
         ioMutex.withLock { setCommandLocked("\\set_split_freq $frequencyHz") }
     }
 
