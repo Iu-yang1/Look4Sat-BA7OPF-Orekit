@@ -189,6 +189,10 @@ class Ft817CatProtocolTest {
         assertNull(Ft817CatProtocol.parseReadResponse(byteArrayOf(0x1A, 0x55, 0x00, 0x00, 0x01)))
     }
 
+    @Test fun parseReadResponse_rejectsOverlongFrame() {
+        assertNull(Ft817CatProtocol.parseReadResponse(byteArrayOf(0, 0x14, 0x59, 0x65, 0, 1)))
+    }
+
     @Test
     fun parseReadResponse_tooShort() {
         assertNull(Ft817CatProtocol.parseReadResponse(byteArrayOf(0x14, 0x55, 0x00)))

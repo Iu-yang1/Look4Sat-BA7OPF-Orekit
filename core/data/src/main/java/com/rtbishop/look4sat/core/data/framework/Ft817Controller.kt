@@ -34,7 +34,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.time.Duration.Companion.milliseconds
 
 class Ft817Controller(
     bluetoothManager: BluetoothManager?,
@@ -51,7 +50,9 @@ class Ft817Controller(
     private val ioMutex = Mutex()
     private val responseTimeoutMs = if (variant == YaesuCatVariant.FT817) 3_000L else 200L
     private val pttRetries = if (variant == YaesuCatVariant.FT817) 5 else 0
-    private var readCommandAcks = true
+    private var recoveryNeeded = false
+    private var transactionId = 0L
+    private val recentTransactions = ArrayDeque<String>()
     override val supportsAtomicPair get() = variant == YaesuCatVariant.FT817
     // Capture the operator's selected receive VFO; never infer its identity from frequency.
     private var presetRxVfoA: Boolean? = null
@@ -65,7 +66,9 @@ class Ft817Controller(
         if (isConnected) return@withContext true
         if (deviceAddress.isBlank()) return@withContext false
         try {
-            readCommandAcks = true
+            recoveryNeeded = false
+            transactionId = 0L
+            recentTransactions.clear()
             presetRxVfoA = null
             isConnected = transport.connect()
             if (isConnected && readFrequencyAndMode() == null) {
@@ -119,12 +122,8 @@ class Ft817Controller(
             ControlDiagnosticSeverity.WARNING)
     }
 
-    private suspend fun readEepromLocked(address: Int): ByteArray? {
-        if (!sendCommand(Ft817CatProtocol.buildEepromReadCommand(address))) return null
-        return readExact(2, EEPROM_TIMEOUT_MS).also {
-            if (it == null) catFailure("eeprom", "address=0x${address.toString(16)} expected=2 timeout")
-        }
-    }
+    private suspend fun readEepromLocked(address: Int): ByteArray? =
+        exchangeLocked(Ft817CatProtocol.buildEepromReadCommand(address), 2, EEPROM_TIMEOUT_MS)
 
     private suspend fun readVfoLocked(): Boolean? =
         readEepromLocked(Ft817CatProtocol.VFO_STATE_ADDRESS)?.let(Ft817CatProtocol::parseVfoA)
@@ -132,12 +131,9 @@ class Ft817Controller(
     private suspend fun readSplitLocked(): Boolean? =
         readEepromLocked(Ft817CatProtocol.SPLIT_STATE_ADDRESS)?.let(Ft817CatProtocol::parseSplitEnabled)
 
-    private suspend fun readPttLocked(): Boolean? {
-        if (!sendCommand(Ft817CatProtocol.buildReadTxStatusCommand())) return null
-        return readExact(1, PTT_STATUS_TIMEOUT_MS)?.singleOrNull()?.let {
-            Ft817CatProtocol.parsePttState(it, variant)
-        }
-    }
+    private suspend fun readPttLocked(): Boolean? =
+        exchangeLocked(Ft817CatProtocol.buildReadTxStatusCommand(), 1, PTT_STATUS_TIMEOUT_MS)
+            ?.singleOrNull()?.let { Ft817CatProtocol.parsePttState(it, variant) }
 
     private suspend fun selectVfoLocked(vfoA: Boolean): Boolean {
         val current = readVfoLocked() ?: return false
@@ -192,7 +188,10 @@ class Ft817Controller(
     }
 
     private suspend fun restoreRxLocked(rxVfoA: Boolean): Boolean = withContext(NonCancellable) {
-        withTimeoutOrNull(1_000L) { selectVfoLocked(rxVfoA) } == true
+        withTimeoutOrNull(RX_RESTORE_TIMEOUT_MS) {
+            // A lost ACK does not mean the toggle failed. Read actual VFO on each attempt.
+            selectVfoLocked(rxVfoA) || selectVfoLocked(rxVfoA)
+        } == true
     }.also { if (!it) catFailure("restore", "RX VFO restoration failed targetA=$rxVfoA") }
 
     // ioMutex and the outer RadioCommandActor own the complete VFO transaction.
@@ -215,8 +214,14 @@ class Ft817Controller(
     }
 
     private suspend fun readFrequencyLocked(): Pair<Long, String>? {
-        if (!sendCommand(Ft817CatProtocol.buildReadFreqModeCommand())) return null
-        return readExact(RESPONSE_SIZE, responseTimeoutMs)?.let(Ft817CatProtocol::parseReadResponse)
+        val response = exchangeLocked(Ft817CatProtocol.buildReadFreqModeCommand(), RESPONSE_SIZE,
+            responseTimeoutMs) ?: return null
+        return Ft817CatProtocol.parseReadResponse(response).also {
+            if (it == null) {
+                recoveryNeeded = true
+                reportCatAnomaly("invalid frequency/mode response=${response.hex()}")
+            }
+        }
     }
 
     private suspend fun tuneSelectedLocked(frequencyHz: Long): Long? {
@@ -364,17 +369,7 @@ class Ft817Controller(
     }
 
     override suspend fun readFrequencyAndMode(): Pair<Long, String>? = withContext(Dispatchers.IO) {
-        ioMutex.withLock {
-            val sent = sendCommand(Ft817CatProtocol.buildReadFreqModeCommand())
-            if (!sent) return@withContext null
-            val response = readExact(RESPONSE_SIZE, responseTimeoutMs)
-            val parsed=response?.let(Ft817CatProtocol::parseReadResponse)
-            if(parsed==null) {
-                isConnected=false
-                withContext(NonCancellable) { runCatching { transport.disconnect() } }
-            }
-            parsed
-        }
+        ioMutex.withLock { readFrequencyLocked() }
     }
 
     override suspend fun pttOn(): Boolean = withContext(Dispatchers.IO) {
@@ -383,12 +378,7 @@ class Ft817Controller(
 
     override val supportsPttReadback get() = true
     override suspend fun readPttState(): Boolean? = withContext(Dispatchers.IO) {
-        ioMutex.withLock {
-            if (!sendCommand(Ft817CatProtocol.buildReadTxStatusCommand())) return@withLock null
-            readExact(1, PTT_STATUS_TIMEOUT_MS)?.singleOrNull()?.let {
-                Ft817CatProtocol.parsePttState(it, variant)
-            }
-        }
+        ioMutex.withLock { readPttLocked() }
     }
 
     override suspend fun pttOff(): Boolean = withContext(Dispatchers.IO) {
@@ -413,23 +403,80 @@ class Ft817Controller(
         }
     }
 
-    /**
-     * Legacy Yaesu CAT documents a one-byte command acknowledgement but does not define its value.
-     * Some compatible interfaces omit it entirely, which Hamlib handles by disabling ACK reads after
-     * the first timeout. Mirror that behaviour instead of incorrectly requiring an ACK value of zero.
-     */
-    private suspend fun sendCommandWithAck(bytes: ByteArray): Boolean {
-        if (!sendCommand(bytes)) return false
-        if (!readCommandAcks) {
-            delay(NO_ACK_POST_WRITE_DELAY_MS)
-            return true
+    // Every write gets its own ACK window. A missing ACK must never disable
+    // consumption of subsequent acknowledgements.
+    private suspend fun sendCommandWithAck(bytes: ByteArray): Boolean =
+        exchangeLocked(bytes, 1, ACK_TIMEOUT_MS, optionalAck = true) != null
+
+    private fun ByteArray.hex(): String = joinToString(" ") {
+        (it.toInt() and 0xFF).toString(16).padStart(2, '0').uppercase()
+    }
+
+    private fun traceCat(message: String) {
+        Log.d(tag, message)
+        recentTransactions.addLast(message)
+        if (recentTransactions.size > 8) recentTransactions.removeFirst()
+    }
+
+    private fun reportCatAnomaly(message: String) {
+        catFailure("cat", message)
+        recentTransactions.forEach { catFailure("cat/trace", it) }
+    }
+
+    // CAT has no response delimiter or transaction ID. Quarantine stale bytes
+    // after incomplete exchanges before sending another opcode.
+    private suspend fun recoverInputLocked(): Boolean {
+        val deadline = System.nanoTime() + RECOVERY_LIMIT_MS * NANOS_PER_MILLISECOND
+        var lastData = System.nanoTime()
+        while (isConnected && System.nanoTime() < deadline) {
+            val chunk = transport.readAvailable(64)
+            if (chunk.isNotEmpty()) {
+                traceCat("discard=${chunk.hex()}")
+                lastData = System.nanoTime()
+            } else if (System.nanoTime() - lastData >= RECOVERY_QUIET_MS * NANOS_PER_MILLISECOND) {
+                recoveryNeeded = false
+                return true
+            }
+            delay(POLL_INTERVAL_MS)
         }
-        if (readByteWithTimeout(ACK_TIMEOUT_MS) == null) {
-            if (!isConnected) return false
-            readCommandAcks = false
-            Log.i(tag, "CAT interface does not return command ACK bytes; continuing without ACK reads")
+        reportCatAnomaly("CAT response stream did not become idle")
+        return false
+    }
+
+    // Caller owns ioMutex for the complete exchange, including recovery.
+    private suspend fun exchangeLocked(
+        command: ByteArray, expected: Int, timeoutMs: Long, optionalAck: Boolean = false
+    ): ByteArray? {
+        val id = ++transactionId
+        val prefix = "id=$id tx=${command.hex()} expected=$expected"
+        try {
+            if (recoveryNeeded && !recoverInputLocked()) {
+                // Attempt PTT release even if its acknowledgement cannot be trusted.
+                if (command.last() == Ft817CatProtocol.CMD_PTT_OFF) sendCommand(command)
+                return null
+            }
+            recoveryNeeded = true
+            if (!sendCommand(command)) return null
+            val response = readResponse(expected, timeoutMs)
+            traceCat("$prefix rx=${if (response.isEmpty()) "empty" else response.hex()}")
+            if (response.size == expected && isConnected) {
+                recoveryNeeded = false
+                return response
+            }
+            if (optionalAck && response.isEmpty() && isConnected) {
+                if (!recoverInputLocked()) return null
+                reportCatAnomaly("$prefix missing or late ACK")
+                return response
+            }
+            reportCatAnomaly("$prefix invalid response length=${response.size}")
+            return null
+        } catch (cancelled: CancellationException) {
+            traceCat("$prefix cancelled")
+            throw cancelled
+        } catch (error: Exception) {
+            reportCatAnomaly("$prefix error=${error.javaClass.simpleName}")
+            return null
         }
-        return true
     }
 
     private suspend fun setPttAndConfirm(enabled: Boolean): Boolean {
@@ -447,66 +494,32 @@ class Ft817Controller(
         val attempts = if (enabled) 1 else pttRetries + 1
         repeat(attempts) { attempt ->
             if (!sendCommandWithAck(command)) return false
-            if (!sendCommand(Ft817CatProtocol.buildReadTxStatusCommand())) return false
-            val status = readExact(1, PTT_STATUS_TIMEOUT_MS)?.singleOrNull()
-            if (status != null && Ft817CatProtocol.parsePttState(status, variant) == enabled) return true
+            if (readPttLocked() == enabled) return true
             if (attempt + 1 < attempts) delay(FT817_PTT_RETRY_DELAY_MS)
         }
         Log.e(tag, "PTT ${if (enabled) "ON" else "OFF"} was not confirmed by TX status")
         return false
     }
 
-    private suspend fun readExact(size: Int, timeoutMs: Long): ByteArray? {
-        return withContext(Dispatchers.IO) {
-            try {
-                val buffer = ByteArray(size)
-                var read = 0
-                val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MILLISECOND
-                while (read < size) {
-                    if (!transport.isConnected) {
-                        isConnected = false
-                        return@withContext null
-                    }
-                    val chunk = transport.readAvailable(size - read)
-                    if (chunk.isEmpty()) {
-                        if (System.nanoTime() >= deadline) return@withContext null
-                        delay(POLL_INTERVAL_MS.milliseconds)
-                        continue
-                    }
-                    chunk.copyInto(buffer, read)
-                    read += chunk.size
-                }
-                buffer
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (e: Exception) {
-                Log.e(tag, "Read error: ${e.message}")
-                isConnected = false
-                null
-            }
-        }
-    }
-
-    private suspend fun readByteWithTimeout(timeoutMs: Long): Int? = withContext(Dispatchers.IO) {
+    private suspend fun readResponse(expected: Int, timeoutMs: Long): ByteArray {
+        val buffer = ByteArray(expected + 1)
+        var count = 0
         val deadline = System.nanoTime() + timeoutMs * NANOS_PER_MILLISECOND
-        try {
-            while (System.nanoTime() < deadline) {
-                if (!transport.isConnected) {
-                    isConnected = false
-                    return@withContext null
-                }
-                val value = transport.readAvailable(1).firstOrNull()
-                if (value != null) return@withContext value.toInt() and 0xFF
-                delay(POLL_INTERVAL_MS.milliseconds)
+        while (count < expected && isConnected && System.nanoTime() < deadline) {
+            val chunk = transport.readAvailable(buffer.size - count)
+            if (chunk.isEmpty()) {
+                delay(POLL_INTERVAL_MS)
+            } else {
+                chunk.copyInto(buffer, count)
+                count += chunk.size
             }
-            null
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            Log.w(tag, "ACK read error: ${error.message}")
-            isConnected = false
-            null
         }
+        if (count == expected && isConnected) {
+            // A stale ACK plus a complete query response is not a valid reply.
+            val extra = transport.readAvailable(1)
+            if (extra.isNotEmpty()) buffer[count++] = extra[0]
+        }
+        return buffer.copyOf(count)
     }
 
     private companion object {
@@ -519,7 +532,9 @@ class Ft817Controller(
         const val FT817_FREQUENCY_SETTLE_MS = 50L
         const val FT817_PTT_RETRY_DELAY_MS = 100L
         const val FT857_PTT_OFF_SETTLE_MS = 200L
-        const val NO_ACK_POST_WRITE_DELAY_MS = 10L
+        const val RECOVERY_QUIET_MS = 120L
+        const val RECOVERY_LIMIT_MS = 500L
+        const val RX_RESTORE_TIMEOUT_MS = 3_000L
         const val NANOS_PER_MILLISECOND = 1_000_000L
     }
 }

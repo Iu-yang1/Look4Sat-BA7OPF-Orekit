@@ -169,7 +169,7 @@ object Ft817CatProtocol {
      * Returns (frequencyHz, modeString) or null if parsing fails.
      */
     fun parseReadResponse(response: ByteArray): Pair<Long, String>? {
-        if (response.size < 5) return null
+        if (response.size != 5) return null
         val frequencyHz = runCatching {
             decodeFrequencyBcd(response.copyOfRange(0, 4))
         }.getOrNull() ?: return null
