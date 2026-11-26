@@ -179,13 +179,23 @@ jobs:
           New-Item -ItemType Directory -Path $dist -Force | Out-Null
           $versionTag = $env:TAG_NAME.TrimStart('v')
           $apkName = "Look4Sat-BA7OPF-Orekit-v$versionTag-universal-release.apk"
+          if ($env:REPLACE_RELEASE_ASSETS -eq 'true') {
+            $shortSha = (git rev-parse --short=8 HEAD).Trim()
+            $apkName = "Look4Sat-BA7OPF-Orekit-$versionTag-$shortSha-release.apk"
+          }
           $releaseApk = Join-Path $dist $apkName
           Copy-Item -LiteralPath $apks[0].FullName -Destination $releaseApk -Force
           "RELEASE_APK=$releaseApk" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-          $releaseAab = Join-Path $dist "Look4Sat-BA7OPF-Orekit-v$versionTag-release.aab"
+          $aabName = if ($env:REPLACE_RELEASE_ASSETS -eq 'true') {
+            "Look4Sat-BA7OPF-Orekit-$versionTag-$shortSha-release.aab"
+          } else { "Look4Sat-BA7OPF-Orekit-v$versionTag-release.aab" }
+          $releaseAab = Join-Path $dist $aabName
           Copy-Item -LiteralPath $bundles[0].FullName -Destination $releaseAab -Force
           "RELEASE_AAB=$releaseAab" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-          $checksumFile = Join-Path $dist "SHA256SUMS-$versionTag.txt"
+          $checksumName = if ($env:REPLACE_RELEASE_ASSETS -eq 'true') {
+            'SHA256SUMS.txt'
+          } else { "SHA256SUMS-$versionTag.txt" }
+          $checksumFile = Join-Path $dist $checksumName
           $checksums = @($releaseApk, $releaseAab) | ForEach-Object {
             "$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $(Split-Path -Leaf $_)"
           }
@@ -254,6 +264,49 @@ jobs:
             throw 'AAB signature verification failed'
           }
 
+          if ($env:REPLACE_RELEASE_ASSETS -eq 'true') {
+            $before = Get-Content -Raw -LiteralPath $env:EXISTING_RELEASE_METADATA | ConvertFrom-Json
+            $oldApks = @($before.assets | Where-Object { $_.name -like 'Look4Sat-BA7OPF-Orekit-*-release.apk' })
+            if ($oldApks.Count -ne 1) { throw 'Expected exactly one existing signed release APK' }
+            $original = Join-Path $env:RUNNER_TEMP 'original-release'
+            New-Item -ItemType Directory -Path $original -Force | Out-Null
+            gh release download $env:TAG_NAME --pattern $oldApks[0].name --dir $original
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to download original APK for certificate comparison' }
+            $oldSigner = (& $apkSigner verify --verbose --print-certs (Join-Path $original $oldApks[0].name)) -join "`n"
+            if ($LASTEXITCODE -ne 0) { throw 'Original APK signature verification failed' }
+            $oldDigest = [regex]::Match($oldSigner, 'SHA-256 digest:\s*([0-9A-Fa-f]+)').Groups[1].Value.ToLowerInvariant()
+            if (-not $oldDigest -or $oldDigest -ne $actualDigest) { throw 'Signing certificate changed' }
+            $catalog = Get-Content 'gradle/libs.versions.toml' -Raw
+            $versionCode = [regex]::Match($catalog, '(?m)^appVersionCode\s*=\s*"([0-9]+)"').Groups[1].Value
+            $badging = (& $aapt2 dump badging $env:RELEASE_APK) -join "`n"
+            if ($LASTEXITCODE -ne 0 -or -not $versionCode -or
+                -not $badging.Contains("versionCode='$versionCode'") -or
+                -not $badging.Contains("versionName='$env:TAG_NAME'")) {
+              throw 'APK version does not match the authorized release'
+            }
+            $assets = [ordered]@{}
+            foreach ($file in @($env:RELEASE_APK, $env:RELEASE_AAB)) {
+              $assets[(Split-Path -Leaf $file)] = @{
+                sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+                size = (Get-Item -LiteralPath $file).Length
+              }
+            }
+            $verification = [ordered]@{
+              tag = $env:TAG_NAME
+              commit = (git rev-parse HEAD).Trim()
+              applicationId = $packageName
+              versionCode = [int]$versionCode
+              signing_certificate_sha256 = $actualDigest
+              same_signing_certificate = $true
+              signed_build_passed = $true
+              native_abis = $expectedAbis
+              assets = $assets
+            }
+            $verificationPath = Join-Path $PWD 'dist/verification.json'
+            [IO.File]::WriteAllText($verificationPath, ($verification | ConvertTo-Json -Depth 6) + "`n", [Text.UTF8Encoding]::new($false))
+            "RELEASE_VERIFICATION=$verificationPath" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
       - name: Setup Ruby
         if: github.event_name == 'workflow_dispatch' && inputs.publish_play && env.PLAY_SERVICE_ACCOUNT_JSON != ''
         uses: ruby/setup-ruby@v1
@@ -293,8 +346,18 @@ jobs:
             if ($LASTEXITCODE -ne 0 -or $current.id -ne $before.id -or $current.body -cne $before.body -or $current.name -cne $before.name) {
               throw 'Existing release identity or notes changed while building'
             }
-            gh release upload $env:TAG_NAME $env:RELEASE_APK $env:RELEASE_AAB $env:RELEASE_CHECKSUMS --clobber
-            if ($LASTEXITCODE -ne 0) { throw 'Unable to replace release assets' }
+            gh release upload $env:TAG_NAME $env:RELEASE_APK $env:RELEASE_AAB $env:RELEASE_VERIFICATION --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to upload replacement release assets' }
+            $uploaded = gh api "repos/$env:GH_REPO/releases/tags/$env:TAG_NAME" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect uploaded replacement assets' }
+            foreach ($file in @($env:RELEASE_APK, $env:RELEASE_AAB, $env:RELEASE_VERIFICATION)) {
+              $name = Split-Path -Leaf $file
+              $digest = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+              $asset = @($uploaded.assets | Where-Object name -eq $name)
+              if ($asset.Count -ne 1 -or $asset[0].state -ne 'uploaded' -or $asset[0].digest -ne "sha256:$digest") {
+                throw "Replacement upload verification failed: $name"
+              }
+            }
             return
           }
           gh release view $env:TAG_NAME *> $null
@@ -337,12 +400,52 @@ jobs:
             Start-Sleep -Seconds 5
           }
           $metadataPath = Join-Path $env:RUNNER_TEMP 'release-metadata.json'
+          if ($env:REPLACE_RELEASE_ASSETS -eq 'true') {
+            $manifestRelease = ($releaseJson -join "`n") | ConvertFrom-Json
+            $apkName = Split-Path -Leaf $env:RELEASE_APK
+            $manifestRelease.assets = @($manifestRelease.assets | Where-Object name -eq $apkName)
+            $releaseJson = $manifestRelease | ConvertTo-Json -Depth 20
+          }
           [IO.File]::WriteAllText($metadataPath, ($releaseJson -join "`n"), [Text.UTF8Encoding]::new($false))
           $manifestPath = Join-Path $PWD 'dist/update.json'
           python tools/build-update-manifest.py --release-json $metadataPath --output $manifestPath
           if ($LASTEXITCODE -ne 0) { throw 'Unable to build update manifest' }
           gh release upload $env:TAG_NAME $manifestPath --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Unable to publish update manifest' }
+
+      - name: Refresh checksums and retire obsolete release assets
+        if: env.REPLACE_RELEASE_ASSETS == 'true'
+        shell: pwsh
+        run: |
+          $manifestPath = Join-Path $PWD 'dist/update.json'
+          $files = @($env:RELEASE_APK, $env:RELEASE_AAB, $env:RELEASE_VERIFICATION, $manifestPath)
+          $checksums = $files | ForEach-Object {
+            "$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $(Split-Path -Leaf $_)"
+          }
+          [IO.File]::WriteAllText($env:RELEASE_CHECKSUMS, ($checksums -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+          gh release upload $env:TAG_NAME $env:RELEASE_CHECKSUMS --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to publish replacement checksums' }
+          $current = gh api "repos/$env:GH_REPO/releases/tags/$env:TAG_NAME" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to verify update metadata' }
+          foreach ($file in @($manifestPath, $env:RELEASE_CHECKSUMS)) {
+            $name = Split-Path -Leaf $file
+            $digest = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            $asset = @($current.assets | Where-Object name -eq $name)
+            if ($asset.Count -ne 1 -or $asset[0].digest -ne "sha256:$digest") {
+              throw "Metadata upload verification failed: $name"
+            }
+          }
+          $keep = @($files + $env:RELEASE_CHECKSUMS | ForEach-Object { Split-Path -Leaf $_ })
+          $before = Get-Content -Raw -LiteralPath $env:EXISTING_RELEASE_METADATA | ConvertFrom-Json
+          foreach ($old in $before.assets) {
+            if ($old.name -in $keep) { continue }
+            if ($old.name -like 'Look4Sat-BA7OPF-Orekit-*-release.apk' -or
+                $old.name -like 'Look4Sat-BA7OPF-Orekit-*-release.aab' -or
+                $old.name -like 'SHA256SUMS*.txt') {
+              gh api -X DELETE "repos/$env:GH_REPO/releases/assets/$($old.id)"
+              if ($LASTEXITCODE -ne 0) { throw "Unable to retire obsolete release asset $($old.name)" }
+            }
+          }
 
       - name: Verify replaced assets and preserve release metadata
         if: env.REPLACE_RELEASE_ASSETS == 'true'
@@ -354,7 +457,13 @@ jobs:
               $after.body -cne $before.body -or $after.name -cne $before.name -or $after.draft -ne $before.draft -or
               $after.prerelease -ne $before.prerelease) { throw 'Release metadata was not preserved' }
           $manifestPath = Join-Path $PWD 'dist/update.json'
-          foreach ($file in @($env:RELEASE_APK, $env:RELEASE_AAB, $env:RELEASE_CHECKSUMS, $manifestPath)) {
+          $apkName = Split-Path -Leaf $env:RELEASE_APK
+          $aabName = Split-Path -Leaf $env:RELEASE_AAB
+          $packages = @($after.assets | Where-Object { $_.name -like 'Look4Sat-BA7OPF-Orekit-*-release.apk' -or $_.name -like 'Look4Sat-BA7OPF-Orekit-*-release.aab' })
+          if ($packages.Count -ne 2 -or $apkName -notin $packages.name -or $aabName -notin $packages.name) {
+            throw 'Obsolete package assets remain in release'
+          }
+          foreach ($file in @($env:RELEASE_APK, $env:RELEASE_AAB, $env:RELEASE_CHECKSUMS, $env:RELEASE_VERIFICATION, $manifestPath)) {
             $name = Split-Path -Leaf $file
             $asset = @($after.assets | Where-Object name -eq $name)
             $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
