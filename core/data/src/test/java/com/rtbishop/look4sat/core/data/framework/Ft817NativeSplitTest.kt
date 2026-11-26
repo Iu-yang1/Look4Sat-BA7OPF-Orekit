@@ -13,14 +13,16 @@ class Ft817NativeSplitTest {
         var split = true
         var ptt = false
         var ignoreFrequencyWrite = false
+        var omitNextWriteAck = false
+        var fragmentReplies = false
         val frequencies = longArrayOf(7_100_000L, 28_500_000L)
         val modes = byteArrayOf(1, 8)
         val opcodes = mutableListOf<Int>()
         private val pending = ArrayDeque<Byte>()
         override suspend fun connect(): Boolean { isConnected = true; return true }
-        override suspend fun disconnect() { isConnected = false }
+        override suspend fun disconnect() { isConnected = false; pending.clear() }
         override suspend fun readAvailable(maxBytes: Int): ByteArray =
-            ByteArray(minOf(maxBytes, pending.size)) { pending.removeFirst() }
+            ByteArray(minOf(maxBytes, pending.size, if (fragmentReplies) 1 else maxBytes)) { pending.removeFirst() }
         override suspend fun write(bytes: ByteArray): Boolean {
             val index = if (aSelected) 0 else 1
             val opcode = bytes[4].toInt() and 255
@@ -41,7 +43,8 @@ class Ft817NativeSplitTest {
                 0x0A, 0x0B -> byteArrayOf(0)
                 else -> error("Unexpected opcode $opcode")
             }
-            pending.addAll(response.toList())
+            if (omitNextWriteAck && opcode == 0x01) omitNextWriteAck = false
+            else pending.addAll(response.toList())
             return true
         }
     }
@@ -67,6 +70,27 @@ class Ft817NativeSplitTest {
             val writes = link.opcodes.count { it == 1 }
             assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_101_237L, 145_901_589L))
             assertEquals(writes, link.opcodes.count { it == 1 })
+            radio.disconnect()
+        }
+    }
+
+    @Test fun intermittentAckAndFragmentationDoNotCorruptNativeSplit() = runBlocking {
+        for (rxA in listOf(true, false)) {
+            val link = Radio().apply { aSelected = rxA; fragmentReplies = true; omitNextWriteAck = true }
+            val radio = Ft817Controller(null, "sim", link)
+            assertTrue(radio.connect())
+            assertTrue(radio.prepareTrackingContext("satellite"))
+            repeat(5) { step ->
+                val rx = 145_962_860L + step * 30
+                val tx = 435_101_000L - step * 50
+                assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(rx, tx))
+                assertEquals(RadioBaseFrequencies(rx, tx), radio.readTrackingFrequencies())
+                assertEquals(rxA, link.aSelected)
+                assertEquals(false, radio.readPttState())
+            }
+            radio.disconnect()
+            assertTrue(radio.connect())
+            assertEquals(false, radio.readPttState())
             radio.disconnect()
         }
     }

@@ -115,8 +115,32 @@ class YaesuControllerTest {
         assertEquals(listOf(0x03, 0x08, 0x88), transport.commands)
     }
 
+    @Test fun missingFirstAckDoesNotPoisonLaterFrequencyOrPttReplies() = runTest {
+        val transport = ScriptedYaesuTransport(dropFirstAck = true, chunkLimit = 1)
+        val radio = Ft817Controller(null, "USB", transport)
+        assertTrue(radio.connect())
+        assertTrue(radio.setMode("USB"))
+        assertTrue(radio.setFrequency(145_500_000L))
+        assertEquals(145_500_000L to "USB", radio.readFrequencyAndMode())
+        assertEquals(false, radio.readPttState())
+        assertTrue(radio.pttOn())
+        assertTrue(radio.pttOff())
+        assertEquals(false, radio.readPttState())
+    }
+
+    @Test fun rejectsShiftedFrequencyFrameAndRecoversForNextQuery() = runTest {
+        val transport = ScriptedYaesuTransport(chunkLimit = 1)
+        val radio = Ft817Controller(null, "USB", transport)
+        assertTrue(radio.connect())
+        transport.prependNextFrequencyAck = true
+        assertEquals(null, radio.readFrequencyAndMode())
+        assertTrue(radio.isConnected)
+        assertEquals(145_500_000L to "USB", radio.readFrequencyAndMode())
+        assertEquals(false, radio.readPttState())
+    }
+
     @Test
-    fun missingCommandAckDisablesFutureAckReadsWithoutBreakingCat() = runTest {
+    fun missingCommandAckDoesNotBreakCat() = runTest {
         val transport = ScriptedYaesuTransport(ack = null)
         val controller = Ft817Controller(
             bluetoothManager = null,
@@ -133,7 +157,13 @@ class YaesuControllerTest {
     }
 }
 
-private class ScriptedYaesuTransport(private val ack: Int? = 0x00, private val ignorePtt: Boolean = false) : RadioTransport {
+private class ScriptedYaesuTransport(
+    private val ack: Int? = 0x00,
+    private val ignorePtt: Boolean = false,
+    private var dropFirstAck: Boolean = false,
+    private val chunkLimit: Int = Int.MAX_VALUE
+) : RadioTransport {
+    var prependNextFrequencyAck = false
     private val replies = ArrayDeque<Byte>()
     val commands = mutableListOf<Int>()
     private var transmitting = false
@@ -155,12 +185,18 @@ private class ScriptedYaesuTransport(private val ack: Int? = 0x00, private val i
         val command = bytes.last().toInt() and 0xFF
         commands += command
         when (command) {
-            0x03 -> enqueue(0x14, 0x55, 0x00, 0x00, 0x01)
+            0x03 -> {
+                if (prependNextFrequencyAck) {
+                    enqueue(0x00)
+                    prependNextFrequencyAck = false
+                }
+                enqueue(0x14, 0x55, 0x00, 0x00, 0x01)
+            }
             0xF7 -> enqueue(if (transmitting) 0x00 else 0xFF)
             else -> {
                 if (!ignorePtt && command == 0x08) transmitting = true
                 if (!ignorePtt && command == 0x88) transmitting = false
-                ack?.let { enqueue(it) }
+                if (dropFirstAck) dropFirstAck = false else ack?.let { enqueue(it) }
             }
         }
         return true
@@ -168,7 +204,7 @@ private class ScriptedYaesuTransport(private val ack: Int? = 0x00, private val i
 
     override suspend fun readAvailable(maxBytes: Int): ByteArray {
         if (maxBytes <= 0 || replies.isEmpty()) return ByteArray(0)
-        return ByteArray(minOf(maxBytes, replies.size)) { replies.removeFirst() }
+        return ByteArray(minOf(maxBytes, replies.size, chunkLimit)) { replies.removeFirst() }
     }
 
     private fun enqueue(vararg bytes: Int) {
